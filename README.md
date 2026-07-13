@@ -1,115 +1,78 @@
-# Gold Algorithmic Trading Strategy
+# XAUUSD Multi-Timeframe Line Research
 
-## 🎯 Overview
+A causal research backtester for testing horizontal XAUUSD lines derived from closed 15-minute, 1-hour, and 4-hour candles. It models both rejection reversals and close-through/retest continuations around prices ending in `0` or `5`.
 
-This repository contains an algorithmic trading strategy for Gold (XAU/USD) based on multi-timeframe zone detection and rejection analysis.
+This project is research software only. It does not place live MT5 orders, and historical win rate or return does not guarantee future performance.
 
-## 📊 Strategy: Gold Bramhastra V2
+## Method
 
-### Core Concept
-The strategy identifies key support and resistance zones using multiple timeframes (15m, 1H, 4H) and trades based on price rejection patterns at these zones.
+- Validates and chronologically resamples 1-minute OHLC data.
+- Confirms swing candidates only after right-side candles close, avoiding pivot look-ahead.
+- Snaps candidates to the nearest $5 level and strengthens lines through timeframe agreement and later touches.
+- Keeps each line active until two confirmed 15-minute closes invalidate it beyond the configured buffer.
+- Tests two independent setups:
+  - **Reversal:** touch and candle rejection, followed by a 15-minute structure break away from the line.
+  - **Continuation:** close through the line, followed by a hold/retest from the opposite side.
+- Places stops beyond the setup spike and targets the next active line. Setups without a valid target are recorded and skipped.
+- Trails behind confirmed 15-minute swings and assumes the stop is hit first when both stop and target occur inside one candle.
+- Applies configurable spread, slippage, commission, account risk, leverage, and notional limits.
 
-### Key Features
-
-- **Multi-Timeframe Zone Detection**: Analyzes 15-minute, 1-hour, and 4-hour timeframes to identify major support and resistance levels
-- **Zone Clustering**: Combines nearby zones to create clean, major S/R levels
-- **Rejection Pattern Analysis**: Waits for confirmed price rejection at zones before entering trades
-- **Dynamic Risk Management**: 
-  - 10% risk per trade
-  - 10x leverage
-  - Trailing stop loss enabled
-  - Tight SL at rejection candle high/low
-- **Target Selection**: Automatically targets opposite zones
-- **Auto-Reverse**: Can reverse positions when hitting opposite zones
-
-### Parameters
-
-```python
-Balance: $10,000
-Leverage: 10x
-Risk per Trade: 10%
-Zone Touch Threshold: 10 pips
-Minimum Touches: 2 touches to confirm zone
-Rejection Threshold: Calculated dynamically from data (30th percentile)
-```
-
-## 📁 Repository Contents
-
-- `scripts/gold_bramhastra_v2.py` - Main trading strategy script
-- `scripts/cache_xauusd_spot_mt5_1m_30d.csv` - Historical 1-minute OHLC data for XAU/USD (30 days)
-
-## 🚀 Usage
-
-### Prerequisites
+## Install and run
 
 ```bash
-pip install pandas numpy
+python -m pip install -r requirements.txt
+python scripts/gold_bramhastra_v2.py
 ```
 
-### Running the Backtest
+Optional arguments:
+
+```bash
+python scripts/gold_bramhastra_v2.py \
+  --data scripts/cache_xauusd_spot_mt5_1m_30d.csv \
+  --annotations scripts/manual_zones_template.csv \
+  --output scripts/backtest_output \
+  --risk-pct 1 \
+  --spread 0.30 \
+  --slippage 0.10
+```
+
+The defaults use 1% account risk per position, 10x maximum leverage, and one open position at a time. Strategy thresholds are centralized in the `Config` dataclass.
+
+## Manual annotations
+
+Populate `scripts/manual_zones_template.csv` to compare detected lines with manually drawn ground truth:
+
+```csv
+line_id,created_at,timeframe,price,side,notes
+manual-001,2026-07-10T08:00:00Z,4h,4050,support,repeated direction changes
+manual-002,2026-07-11T12:00:00Z,1h,4070,resistance,chart-confirmed line
+```
+
+- `created_at` must be the time the line became knowable, not an earlier pivot chosen with hindsight.
+- `timeframe` should be `15m`, `1h`, or `4h`.
+- `side` may be `support`, `resistance`, or blank.
+- An empty template is valid; the algorithm runs without manual calibration.
+
+## Artifacts
+
+The output directory contains:
+
+- `summary.json`: return, win rate, expectancy, profit factor, drawdown, setup split, and annotation coverage.
+- `zones.csv`: complete line lifecycle, score, source timeframes, touches, and invalidation.
+- `events.csv`: auditable zone touches, updates, invalidations, skipped setups, and entries.
+- `trades.csv`: entries, spike stops, targets, sizing, costs, exits, P&L, and R-multiples.
+
+Fewer than 30 trades produces a small-sample warning. Compare longer chronological periods and reserve later data for true out-of-sample evaluation before changing thresholds.
+
+## Tests
 
 ```bash
 cd scripts
-python gold_bramhastra_v2.py
+python -m unittest -v test_gold_bramhastra_v2.py
 ```
 
-### Output
+The synthetic tests cover closed-bar resampling, delayed swing confirmation, $5 snapping, two-close invalidation, conservative ambiguous fills, and empty annotation fallback.
 
-The script will:
-1. Detect zones from the historical data
-2. Calculate optimal rejection threshold
-3. Run backtest simulation
-4. Print performance metrics
-5. Save detailed results to `gold_backtest_v2_results.json`
+## Important limitations
 
-### Expected Metrics
-
-- Start Balance
-- Final Balance
-- ROI (Return on Investment)
-- Total Trades
-- Win Rate
-- Maximum Drawdown
-- Number of Zones Detected
-
-## 📈 How It Works
-
-1. **Zone Detection**: 
-   - Converts 1-minute data to 15m, 1H, and 4H timeframes
-   - Identifies swing highs and lows in each timeframe
-   - Clusters nearby zones (within 20 pips)
-   - Filters zones requiring minimum 2 touches
-
-2. **Rejection Analysis**:
-   - Analyzes all historical zone touches
-   - Calculates rejection percentage (how much price moved away)
-   - Uses 30th percentile as optimal entry threshold
-
-3. **Trade Execution**:
-   - Waits for price to touch a zone
-   - Confirms rejection meets threshold percentage
-   - Enters trade with tight SL at rejection candle
-   - Sets TP at opposite zone
-   - Trails stop as price moves favorably
-
-4. **Risk Management**:
-   - Position sizing based on 10% account risk
-   - Maximum position capped at $50k or 10x leverage
-   - Trailing stops to protect profits
-   - Auto-closes at opposite zones
-
-## ⚠️ Disclaimer
-
-This is a backtesting script for educational purposes only. Past performance does not guarantee future results. Always test thoroughly and use proper risk management when trading live.
-
-## 📝 License
-
-Open source - feel free to modify and use for your own trading research.
-
-## 🤝 Contributing
-
-Feel free to fork, improve, and submit pull requests!
-
----
-
-**Note**: This strategy is based on zone rejection principles observed in actual trading charts. The zone detection matches real trading zones for more realistic backtest results.
+OHLC candles cannot reveal the exact intrabar path, so ambiguous stop/target candles are treated pessimistically. The provided 30-day sample is too short to support claims of near-100% win rate or stable high ROI; validation should include more market regimes, broker-specific costs, walk-forward testing, and manually annotated lines.

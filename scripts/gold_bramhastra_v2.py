@@ -1,480 +1,356 @@
 #!/usr/bin/env python3
+"""Causal multi-timeframe XAUUSD line research backtester.
+
+Research software only. It does not place orders or imply future performance.
 """
-GOLD BRAMHASTRA V2 - REAL ZONE REJECTION STRATEGY
-==================================================
-Based on actual trading chart analysis
+from __future__ import annotations
 
-STRATEGY:
-1. Detect zones from 15m/1H/4H combination (clean, fewer zones)
-2. Wait for price to touch zone
-3. Analyze rejection % to confirm reversal
-4. Enter after rejection confirmation
-5. SL at rejection candle high/low (tight)
-6. TP at opposite zone
-7. Trail stops as price moves
-8. Auto-reverse when hitting opposite zone
-
-PARAMETERS:
-- Risk: 10% per trade
-- Leverage: 10x
-- Trailing stop: ENABLED
-- Auto-reverse: ENABLED
-"""
-
-import pandas as pd
-import numpy as np
-from datetime import datetime, timezone
+import argparse
 import json
+import math
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Optional
 
-class GoldBramhastraV2:
-    def __init__(self):
-        # STRATEGY PARAMETERS
-        self.balance = 10000
-        self.start = 10000
-        self.leverage = 10.0
-        self.risk_pct = 10.0
-        
-        # Zone detection parameters
-        self.zone_threshold = 10  # Touch detection threshold
-        self.min_touches = 2      # Minimum touches to confirm zone
-        
-        # Rejection parameters (will be optimized)
-        self.rejection_pct = None  # To be calculated from data
-        
-        # Trading state
-        self.zones = []
-        self.trades = []
-        self.active_trade = None
-        
-    def detect_zones_multi_timeframe(self, df_1m):
-        """
-        Detect zones from 15m, 1H, 4H combination
-        Returns clean, major S/R levels
-        """
-        print("\n🔍 Detecting zones from multiple timeframes...")
-        
-        # Convert 1m data to different timeframes
-        df_1m['datetime'] = pd.to_datetime(df_1m['time'], unit='s')
-        df_1m.set_index('datetime', inplace=True)
-        
-        # Resample to 15m, 1H, 4H
-        df_15m = df_1m.resample('15T').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last'
-        }).dropna()
-        
-        df_1h = df_1m.resample('1H').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last'
-        }).dropna()
-        
-        df_4h = df_1m.resample('4H').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last'
-        }).dropna()
-        
-        # Reset index to get back time column
-        df_1m.reset_index(inplace=True)
-        df_1m['time'] = df_1m['datetime'].astype(int) // 10**9
-        
-        # Find swing highs/lows in each timeframe
-        zones_15m = self._find_swings(df_15m, lookback=5)
-        zones_1h = self._find_swings(df_1h, lookback=5)
-        zones_4h = self._find_swings(df_4h, lookback=3)
-        
-        # Combine zones and cluster similar levels
-        all_zones = zones_15m + zones_1h + zones_4h
-        clustered_zones = self._cluster_zones(all_zones, cluster_distance=20)
-        
-        # Filter by minimum touches
-        self.zones = self._filter_by_touches(clustered_zones, df_1m)
-        
-        print(f"✅ Detected {len(self.zones)} major zones")
-        if len(self.zones) > 0:
-            print(f"   Zone range: ${min(self.zones):.2f} - ${max(self.zones):.2f}")
-        
-        return self.zones
-    
-    def _find_swings(self, df, lookback=5):
-        """Find swing highs and lows in dataframe"""
-        zones = []
-        
-        for i in range(lookback, len(df) - lookback):
-            # Swing high
-            if df.iloc[i]['high'] == max(df.iloc[i-lookback:i+lookback+1]['high']):
-                zones.append(round(df.iloc[i]['high']))
-            
-            # Swing low
-            if df.iloc[i]['low'] == min(df.iloc[i-lookback:i+lookback+1]['low']):
-                zones.append(round(df.iloc[i]['low']))
-        
-        return zones
-    
-    def _cluster_zones(self, zones, cluster_distance=20):
-        """Cluster nearby zones into single levels"""
-        if not zones:
-            return []
-        
-        zones = sorted(zones)
-        clustered = []
-        current_cluster = [zones[0]]
-        
-        for zone in zones[1:]:
-            if zone - current_cluster[-1] <= cluster_distance:
-                current_cluster.append(zone)
-            else:
-                # Save average of cluster
-                clustered.append(int(np.mean(current_cluster)))
-                current_cluster = [zone]
-        
-        # Don't forget last cluster
-        clustered.append(int(np.mean(current_cluster)))
-        
-        return clustered
-    
-    def _filter_by_touches(self, zones, df_1m):
-        """Filter zones by minimum number of touches"""
-        zone_touches = {zone: 0 for zone in zones}
-        
-        for _, candle in df_1m.iterrows():
-            for zone in zones:
-                if abs(candle['high'] - zone) <= self.zone_threshold or \
-                   abs(candle['low'] - zone) <= self.zone_threshold:
-                    zone_touches[zone] += 1
-        
-        # Keep zones with minimum touches
-        filtered = [z for z, cnt in zone_touches.items() if cnt >= self.min_touches]
-        return sorted(filtered)
-    
-    def find_optimal_rejection_pct(self, df_1m):
-        """
-        Analyze all zone touches to find optimal rejection % threshold
-        A rejection is confirmed when price moves X% away from zone
-        """
-        print("\n📊 Analyzing rejection patterns...")
-        
-        rejections = []
-        
-        for zone in self.zones:
-            # Find all candles that touch this zone
-            for i in range(10, len(df_1m) - 10):
-                candle = df_1m.iloc[i]
-                
-                # Check if zone touched
-                touched = (abs(candle['high'] - zone) <= self.zone_threshold or 
-                          abs(candle['low'] - zone) <= self.zone_threshold)
-                
-                if not touched:
-                    continue
-                
-                # Determine if this was resistance or support
-                if candle['close'] < zone:
-                    # Touched from below - resistance
-                    # Check if price rejected (moved down)
-                    next_candles = df_1m.iloc[i+1:i+11]
-                    
-                    for j, nc in next_candles.iterrows():
-                        move_pct = ((zone - nc['close']) / zone) * 100
-                        if move_pct > 0:  # Price moved down
-                            rejections.append(move_pct)
-                            break
-                
-                elif candle['close'] > zone:
-                    # Touched from above - support
-                    # Check if price rejected (moved up)
-                    next_candles = df_1m.iloc[i+1:i+11]
-                    
-                    for j, nc in next_candles.iterrows():
-                        move_pct = ((nc['close'] - zone) / zone) * 100
-                        if move_pct > 0:  # Price moved up
-                            rejections.append(move_pct)
-                            break
-        
-        if rejections:
-            # Find the median rejection % as threshold
-            self.rejection_pct = np.percentile(rejections, 30)  # 30th percentile - early signal
-            print(f"✅ Optimal rejection threshold: {self.rejection_pct:.3f}%")
-            print(f"   Total rejections analyzed: {len(rejections)}")
-            print(f"   Min: {min(rejections):.3f}%, Max: {max(rejections):.3f}%")
+import numpy as np
+import pandas as pd
+
+
+@dataclass
+class Config:
+    start_balance: float = 10_000.0
+    risk_pct: float = 1.0
+    leverage: float = 10.0
+    max_notional: float = 50_000.0
+    grid: float = 5.0
+    tolerance: float = 1.25
+    invalidation_buffer: float = 1.0
+    stop_buffer: float = 0.30
+    min_score: float = 2.0
+    break_lookback: int = 3
+    max_setup_bars: int = 8
+    spread: float = 0.30
+    slippage: float = 0.10
+    commission_per_oz: float = 0.0
+    train_fraction: float = 0.60
+
+
+@dataclass
+class Zone:
+    id: str
+    price: float
+    created_at: pd.Timestamp
+    source_timeframes: set[str] = field(default_factory=set)
+    score: float = 0.0
+    sides: set[str] = field(default_factory=set)
+    touches: int = 0
+    last_touch: Optional[pd.Timestamp] = None
+    invalidated_at: Optional[pd.Timestamp] = None
+    invalidation_reason: str = ""
+
+    @property
+    def active(self) -> bool:
+        return self.invalidated_at is None
+
+
+@dataclass
+class Setup:
+    zone_id: str
+    kind: str
+    direction: str
+    started_at: pd.Timestamp
+    expires_index: int
+    spike: float
+    stage: str
+
+
+TIMEFRAMES = {"15m": ("15min", 3, 1.0), "1h": ("1h", 3, 1.7), "4h": ("4h", 2, 2.5)}
+
+
+def load_candles(path: Path) -> pd.DataFrame:
+    raw = pd.read_csv(path, header=None, names=["time", "open", "high", "low", "close"])
+    for col in ["time", "open", "high", "low", "close"]:
+        raw[col] = pd.to_numeric(raw[col], errors="coerce")
+    if raw.isna().any().any():
+        raise ValueError("Input contains missing or non-numeric OHLC values")
+    raw["datetime"] = pd.to_datetime(raw["time"], unit="s", utc=True)
+    raw = raw.sort_values("datetime").drop_duplicates("datetime", keep="last").set_index("datetime")
+    valid = (raw.high >= raw[["open", "close"]].max(axis=1)) & (raw.low <= raw[["open", "close"]].min(axis=1)) & (raw.high >= raw.low)
+    if not valid.all():
+        raise ValueError(f"Input contains {(~valid).sum()} malformed candles")
+    return raw[["open", "high", "low", "close"]].astype(float)
+
+
+def resample_closed(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Timestamp bars by close time; only complete source intervals are retained."""
+    bars = df.resample(rule, label="right", closed="left").agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"), count=("close", "count")
+    ).dropna()
+    expected = int(pd.Timedelta(rule) / pd.Timedelta("1min"))
+    return bars[bars["count"] == expected].drop(columns="count")
+
+
+def confirmed_swings(bars: pd.DataFrame, right: int, timeframe: str) -> list[dict]:
+    """A pivot becomes observable only at i + right, never at pivot time."""
+    found: list[dict] = []
+    for i in range(right, len(bars) - right):
+        window = bars.iloc[i - right : i + right + 1]
+        pivot, confirmed = bars.index[i], bars.index[i + right]
+        if bars.iloc[i].high >= window.high.max():
+            found.append({"pivot_at": pivot, "confirmed_at": confirmed, "raw_price": bars.iloc[i].high, "side": "high", "timeframe": timeframe})
+        if bars.iloc[i].low <= window.low.min():
+            found.append({"pivot_at": pivot, "confirmed_at": confirmed, "raw_price": bars.iloc[i].low, "side": "low", "timeframe": timeframe})
+    return found
+
+
+def snap(price: float, grid: float) -> float:
+    return round(price / grid) * grid
+
+
+class ResearchBacktester:
+    def __init__(self, config: Config):
+        self.c = config
+        self.zones: dict[str, Zone] = {}
+        self.events: list[dict] = []
+        self.trades: list[dict] = []
+        self.balance = config.start_balance
+        self.position: Optional[dict] = None
+        self.setups: dict[tuple[str, str], Setup] = {}
+        self.last_episode: dict[tuple[str, str], pd.Timestamp] = {}
+        self._zone_counter = 0
+
+    def build_candidates(self, one_minute: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+        bars15 = resample_closed(one_minute, "15min")
+        candidates: list[dict] = []
+        for name, (rule, right, weight) in TIMEFRAMES.items():
+            bars = bars15 if name == "15m" else resample_closed(one_minute, rule)
+            for item in confirmed_swings(bars, right, name):
+                item["price"] = snap(item["raw_price"], self.c.grid)
+                item["weight"] = weight
+                candidates.append(item)
+        candidates.sort(key=lambda x: x["confirmed_at"])
+        return bars15, candidates
+
+    def _add_candidate(self, candidate: dict) -> None:
+        nearby = [z for z in self.zones.values() if z.active and abs(z.price - candidate["price"]) <= self.c.tolerance]
+        if nearby:
+            zone = min(nearby, key=lambda z: abs(z.price - candidate["price"]))
+            new_tf = candidate["timeframe"] not in zone.source_timeframes
+            zone.source_timeframes.add(candidate["timeframe"])
+            zone.sides.add(candidate["side"])
+            zone.score += candidate["weight"] + (0.5 if new_tf else 0.0)
+            self.events.append(self._event(candidate["confirmed_at"], zone, "zone_updated", candidate["timeframe"]))
         else:
-            self.rejection_pct = 0.05  # Default 0.05% if no data
-            print(f"⚠️  No rejections found, using default: {self.rejection_pct}%")
-        
-        return self.rejection_pct
-    
-    def backtest(self, df_1m):
-        """Run backtest with zone rejection strategy"""
-        print("\n🚀 Starting backtest...")
-        
-        for i in range(50, len(df_1m)):
-            candle = df_1m.iloc[i]
-            
-            # Manage active trade
-            if self.active_trade:
-                self._manage_trade(candle, i, df_1m)
-            
-            # Skip if have active trade
-            if self.active_trade:
+            self._zone_counter += 1
+            zone = Zone(
+                id=f"Z{self._zone_counter:04d}",
+                price=candidate["price"],
+                created_at=candidate["confirmed_at"],
+                source_timeframes={candidate["timeframe"]},
+                score=candidate["weight"],
+                sides={candidate["side"]},
+            )
+            self.zones[zone.id] = zone
+            self.events.append(self._event(candidate["confirmed_at"], zone, "zone_created", candidate["timeframe"]))
+
+    @staticmethod
+    def _event(at: pd.Timestamp, zone: Zone, event: str, detail: str = "") -> dict:
+        return {"time": at.isoformat(), "zone_id": zone.id, "zone_price": zone.price, "event": event, "detail": detail}
+
+    def _active_zones(self) -> list[Zone]:
+        return sorted((z for z in self.zones.values() if z.active and z.score >= self.c.min_score), key=lambda z: z.price)
+
+    def _next_target(self, entry: float, direction: str, excluded: str) -> Optional[float]:
+        prices = [z.price for z in self._active_zones() if z.id != excluded]
+        valid = [p for p in prices if p > entry + self.c.tolerance] if direction == "LONG" else [p for p in prices if p < entry - self.c.tolerance]
+        return min(valid) if direction == "LONG" and valid else max(valid) if valid else None
+
+    def _invalidate(self, i: int, bars: pd.DataFrame) -> None:
+        if i == 0:
+            return
+        prev, bar = bars.iloc[i - 1], bars.iloc[i]
+        for zone in self._active_zones():
+            # Both confirming closes must occur after the line became observable.
+            if bars.index[i - 1] < zone.created_at:
                 continue
-            
-            # Check for zone touch
-            for zone in self.zones:
-                touched = (abs(candle['high'] - zone) <= self.zone_threshold or 
-                          abs(candle['low'] - zone) <= self.zone_threshold)
-                
-                if not touched:
+            above = "high" in zone.sides and "low" not in zone.sides and prev.close > zone.price + self.c.invalidation_buffer and bar.close > zone.price + self.c.invalidation_buffer
+            below = "low" in zone.sides and "high" not in zone.sides and prev.close < zone.price - self.c.invalidation_buffer and bar.close < zone.price - self.c.invalidation_buffer
+            if above or below:
+                zone.invalidated_at = bars.index[i]
+                zone.invalidation_reason = "two_closes_above" if above else "two_closes_below"
+                self.events.append(self._event(bars.index[i], zone, "zone_invalidated", zone.invalidation_reason))
+
+    def _detect_setups(self, i: int, bars: pd.DataFrame) -> None:
+        if i < self.c.break_lookback + 1:
+            return
+        bar, prev = bars.iloc[i], bars.iloc[i - 1]
+        at = bars.index[i]
+        prior = bars.iloc[i - self.c.break_lookback : i]
+        for zone in self._active_zones():
+            touched = bar.low <= zone.price + self.c.tolerance and bar.high >= zone.price - self.c.tolerance
+            if touched:
+                zone.touches += 1
+                zone.last_touch = at
+                zone.score += 0.15
+                self.events.append(self._event(at, zone, "touch"))
+                if bar.close > zone.price and bar.low < zone.price and bar.close > bar.open:
+                    self.setups[(zone.id, "reversal")] = Setup(zone.id, "reversal", "LONG", at, i + self.c.max_setup_bars, bar.low, "rejected")
+                elif bar.close < zone.price and bar.high > zone.price and bar.close < bar.open:
+                    self.setups[(zone.id, "reversal")] = Setup(zone.id, "reversal", "SHORT", at, i + self.c.max_setup_bars, bar.high, "rejected")
+            if prev.close <= zone.price + self.c.tolerance and bar.close > zone.price + self.c.invalidation_buffer:
+                self.setups[(zone.id, "continuation")] = Setup(zone.id, "continuation", "LONG", at, i + self.c.max_setup_bars, min(prev.low, bar.low), "broken")
+            elif prev.close >= zone.price - self.c.tolerance and bar.close < zone.price - self.c.invalidation_buffer:
+                self.setups[(zone.id, "continuation")] = Setup(zone.id, "continuation", "SHORT", at, i + self.c.max_setup_bars, max(prev.high, bar.high), "broken")
+
+            for kind in ("reversal", "continuation"):
+                setup = self.setups.get((zone.id, kind))
+                if not setup or i > setup.expires_index or self.position:
                     continue
-                
-                # Check for rejection confirmation
-                direction, entry, sl = self._check_rejection(candle, zone, i, df_1m)
-                
-                if direction:
-                    # Find target (opposite zone)
-                    tp = self._find_target_zone(zone, direction)
-                    if tp:
-                        self._enter_trade(candle, direction, entry, sl, tp, zone, i)
-                        break
-        
-        # Close remaining trades
-        if self.active_trade:
-            self._close_trade(self.active_trade, df_1m.iloc[-1]['close'], len(df_1m)-1, "EOD")
-        
-        return self._calculate_metrics()
-    
-    def _check_rejection(self, candle, zone, idx, df_1m):
-        """
-        Check if price shows rejection confirmation
-        Returns: (direction, entry_price, sl_price) or (None, None, None)
-        """
-        # Determine if zone is acting as support or resistance
-        if candle['close'] < zone:
-            # Touched from below - resistance
-            # Check for rejection DOWN
-            move_pct = ((zone - candle['close']) / zone) * 100
-            
-            if move_pct >= self.rejection_pct:
-                # Rejection confirmed - SHORT
-                direction = "SHORT"
-                entry = candle['close']
-                sl = candle['high']  # SL at rejection candle high
-                return direction, entry, sl
-        
-        elif candle['close'] > zone:
-            # Touched from above - support  
-            # Check for rejection UP
-            move_pct = ((candle['close'] - zone) / zone) * 100
-            
-            if move_pct >= self.rejection_pct:
-                # Rejection confirmed - LONG
-                direction = "LONG"
-                entry = candle['close']
-                sl = candle['low']  # SL at rejection candle low
-                return direction, entry, sl
-        
-        return None, None, None
-    
-    def _find_target_zone(self, current_zone, direction):
-        """Find the opposite zone as target"""
-        if direction == "LONG":
-            # Find next zone above
-            targets = [z for z in self.zones if z > current_zone + 20]
-            return targets[0] if targets else None
-        else:
-            # Find next zone below
-            targets = [z for z in self.zones if z < current_zone - 20]
-            return targets[-1] if targets else None
-    
-    def _enter_trade(self, candle, direction, entry, sl, tp, zone, idx):
-        """Enter a new trade"""
-        # Calculate position size
-        sl_dist = abs(entry - sl)
-        risk_usd = self.balance * (self.risk_pct / 100)
-        qty = risk_usd / sl_dist
-        
-        # Apply leverage limit
-        max_qty = (self.balance * self.leverage) / entry
-        qty = min(qty, max_qty)
-        
-        # Apply position cap ($50k)
-        max_notional = min(50000, self.balance * self.leverage)
-        max_qty_cap = max_notional / entry
-        qty = min(qty, max_qty_cap)
-        
-        self.active_trade = {
-            'id': len(self.trades),
-            'idx': idx,
-            'time': candle['time'],
-            'dir': direction,
-            'entry': entry,
-            'sl': sl,
-            'tp': tp,
-            'zone': zone,
-            'qty': qty,
-            'balance_before': self.balance,
-            'best_price': entry,
-            'trailing_sl': sl,
-            'closed': False
-        }
-        
-        print(f"\n{'='*60}")
-        print(f"📈 {direction} ENTRY")
-        print(f"   Entry: ${entry:.2f}")
-        print(f"   SL: ${sl:.2f} ({abs(entry-sl):.2f} pips)")
-        print(f"   TP: ${tp:.2f} ({abs(tp-entry):.2f} pips)")
-        print(f"   Zone: ${zone:.2f}")
-        print(f"   Qty: {qty:.2f} oz")
-        print(f"   Balance: ${self.balance:,.2f}")
-    
-    def _manage_trade(self, candle, idx, df_1m):
-        """Manage active trade with trailing stop and reversal"""
-        t = self.active_trade
-        
-        # Update trailing stop
-        if t['dir'] == "LONG":
-            # Update best price
-            if candle['high'] > t['best_price']:
-                t['best_price'] = candle['high']
-                # Move trailing SL
-                sl_distance = t['entry'] - t['sl']
-                new_trailing_sl = t['best_price'] - sl_distance
-                if new_trailing_sl > t['trailing_sl']:
-                    t['trailing_sl'] = new_trailing_sl
-            
-            # Check exits
-            if candle['low'] <= t['trailing_sl']:
-                self._close_trade(t, t['trailing_sl'], idx, "Trailing-SL")
-            elif candle['high'] >= t['tp']:
-                # Check if hitting opposite zone - prepare for reversal
-                self._close_trade(t, t['tp'], idx, "TP-ZoneHit")
-        
-        else:  # SHORT
-            # Update best price
-            if candle['low'] < t['best_price']:
-                t['best_price'] = candle['low']
-                # Move trailing SL
-                sl_distance = t['sl'] - t['entry']
-                new_trailing_sl = t['best_price'] + sl_distance
-                if new_trailing_sl < t['trailing_sl']:
-                    t['trailing_sl'] = new_trailing_sl
-            
-            # Check exits
-            if candle['high'] >= t['trailing_sl']:
-                self._close_trade(t, t['trailing_sl'], idx, "Trailing-SL")
-            elif candle['low'] <= t['tp']:
-                # Check if hitting opposite zone - prepare for reversal
-                self._close_trade(t, t['tp'], idx, "TP-ZoneHit")
-    
-    def _close_trade(self, t, exit_price, idx, reason):
-        """Close trade"""
-        if t['dir'] == "LONG":
-            pnl = (exit_price - t['entry']) * t['qty']
-        else:
-            pnl = (t['entry'] - exit_price) * t['qty']
-        
+                direction = setup.direction
+                if kind == "reversal":
+                    structure = bar.close > prior.high.max() if direction == "LONG" else bar.close < prior.low.min()
+                    confirmed = structure
+                else:
+                    retest = bar.low <= zone.price + self.c.tolerance and bar.close > zone.price if direction == "LONG" else bar.high >= zone.price - self.c.tolerance and bar.close < zone.price
+                    confirmed = retest and at > setup.started_at
+                if confirmed:
+                    self._enter(at, float(bar.close), setup, zone)
+                    del self.setups[(zone.id, kind)]
+                    break
+
+    def _enter(self, at: pd.Timestamp, raw_entry: float, setup: Setup, zone: Zone) -> None:
+        side = 1 if setup.direction == "LONG" else -1
+        entry = raw_entry + side * (self.c.spread / 2 + self.c.slippage)
+        stop = setup.spike - self.c.stop_buffer if side == 1 else setup.spike + self.c.stop_buffer
+        risk_distance = abs(entry - stop)
+        target = self._next_target(entry, setup.direction, zone.id)
+        if target is None or risk_distance <= 0 or (side == 1 and target <= entry) or (side == -1 and target >= entry):
+            self.events.append(self._event(at, zone, "setup_skipped", "no_target_or_invalid_risk"))
+            return
+        qty = min(self.balance * self.c.risk_pct / 100 / risk_distance, self.balance * self.c.leverage / entry, self.c.max_notional / entry)
+        if not math.isfinite(qty) or qty <= 0:
+            return
+        self.position = {"entry_time": at.isoformat(), "setup": setup.kind, "direction": setup.direction, "zone_id": zone.id, "zone_price": zone.price, "entry": entry, "initial_stop": stop, "stop": stop, "target": target, "qty": qty, "risk_usd": risk_distance * qty, "balance_before": self.balance}
+        self.events.append(self._event(at, zone, "trade_entered", f"{setup.kind}:{setup.direction}"))
+
+    def _manage(self, i: int, bars: pd.DataFrame) -> None:
+        if not self.position:
+            return
+        p, bar, at = self.position, bars.iloc[i], bars.index[i]
+        long = p["direction"] == "LONG"
+        hit_stop = bar.low <= p["stop"] if long else bar.high >= p["stop"]
+        hit_target = bar.high >= p["target"] if long else bar.low <= p["target"]
+        if hit_stop:  # conservative ordering when both are touched
+            self._close(at, p["stop"], "stop_or_ambiguous" if hit_target else "stop")
+            return
+        if hit_target:
+            self._close(at, p["target"], "target")
+            return
+        right = 2
+        if i >= right * 2:
+            pivot = bars.iloc[i - right]
+            window = bars.iloc[i - right * 2 : i + 1]
+            if long and pivot.low <= window.low.min() and pivot.low > p["stop"]:
+                p["stop"] = float(pivot.low - self.c.stop_buffer)
+            elif not long and pivot.high >= window.high.max() and pivot.high < p["stop"]:
+                p["stop"] = float(pivot.high + self.c.stop_buffer)
+
+    def _close(self, at: pd.Timestamp, raw_exit: float, reason: str) -> None:
+        p = self.position
+        assert p is not None
+        side = 1 if p["direction"] == "LONG" else -1
+        exit_price = raw_exit - side * (self.c.spread / 2 + self.c.slippage)
+        gross = side * (exit_price - p["entry"]) * p["qty"]
+        commission = p["qty"] * self.c.commission_per_oz * 2
+        pnl = gross - commission
+        estimated_friction = p["qty"] * (self.c.spread + 2 * self.c.slippage) + commission
+        baseline_pnl = pnl + estimated_friction
         self.balance += pnl
-        
-        t['closed'] = True
-        t['exit'] = exit_price
-        t['exit_idx'] = idx
-        t['reason'] = reason
-        t['pnl'] = pnl
-        t['balance_after'] = self.balance
-        
-        self.trades.append(t)
-        self.active_trade = None
-        
-        print(f"\n{'='*60}")
-        print(f"💰 TRADE CLOSED: {reason}")
-        print(f"   Exit: ${exit_price:.2f}")
-        print(f"   P&L: ${pnl:+,.2f}")
-        print(f"   Balance: ${self.balance:,.2f}")
-    
-    def _calculate_metrics(self):
-        """Calculate performance metrics"""
-        if not self.trades:
-            return None
-        
-        wins = [t for t in self.trades if t['pnl'] > 0]
-        losses = [t for t in self.trades if t['pnl'] <= 0]
-        
-        total_pnl = sum(t['pnl'] for t in self.trades)
-        roi = (total_pnl / self.start) * 100
-        
-        # Calculate drawdown
-        peak = self.start
-        max_dd = 0
-        
-        for t in self.trades:
-            if t['balance_after'] > peak:
-                peak = t['balance_after']
-            dd = ((peak - t['balance_after']) / peak) * 100
-            if dd > max_dd:
-                max_dd = dd
-        
-        return {
-            'start': self.start,
-            'final': self.balance,
-            'roi': roi,
-            'trades': len(self.trades),
-            'wins': len(wins),
-            'losses': len(losses),
-            'win_rate': len(wins) / len(self.trades) * 100 if self.trades else 0,
-            'max_dd': max_dd,
-            'zones': len(self.zones)
-        }
+        p.update(exit_time=at.isoformat(), exit=exit_price, exit_reason=reason, pnl=pnl, baseline_no_cost_pnl=baseline_pnl, estimated_cost=estimated_friction, r_multiple=pnl / p["risk_usd"] if p["risk_usd"] else 0, balance_after=self.balance)
+        self.trades.append(p)
+        self.position = None
+
+    def run(self, one_minute: pd.DataFrame) -> dict:
+        bars, candidates = self.build_candidates(one_minute)
+        cursor = 0
+        for i, at in enumerate(bars.index):
+            while cursor < len(candidates) and candidates[cursor]["confirmed_at"] <= at:
+                self._add_candidate(candidates[cursor]); cursor += 1
+            self._manage(i, bars)
+            self._detect_setups(i, bars)
+            self._invalidate(i, bars)
+        if self.position:
+            self._close(bars.index[-1], float(bars.iloc[-1].close), "end_of_data")
+        return self.metrics(bars)
+
+    def metrics(self, bars: pd.DataFrame) -> dict:
+        pnls = [t["pnl"] for t in self.trades]
+        wins, losses = [p for p in pnls if p > 0], [p for p in pnls if p <= 0]
+        equity = [self.c.start_balance] + [t["balance_after"] for t in self.trades]
+        peak, max_dd = equity[0], 0.0
+        for value in equity:
+            peak = max(peak, value); max_dd = max(max_dd, (peak - value) / peak if peak else 0)
+        split = {}
+        for kind in ("reversal", "continuation"):
+            ts = [t for t in self.trades if t["setup"] == kind]
+            split[kind] = {"trades": len(ts), "win_rate_pct": 100 * sum(t["pnl"] > 0 for t in ts) / len(ts) if ts else 0, "pnl": sum(t["pnl"] for t in ts)}
+        boundary = bars.index[int((len(bars) - 1) * self.c.train_fraction)]
+        period_split = {}
+        for label, period_trades in {
+            "calibration": [t for t in self.trades if pd.Timestamp(t["entry_time"]) < boundary],
+            "out_of_sample": [t for t in self.trades if pd.Timestamp(t["entry_time"]) >= boundary],
+        }.items():
+            period_split[label] = {"trades": len(period_trades), "pnl": sum(t["pnl"] for t in period_trades), "win_rate_pct": 100 * sum(t["pnl"] > 0 for t in period_trades) / len(period_trades) if period_trades else 0}
+        return {"research_warning": "Historical simulation is not a guarantee of future performance.", "start_balance": self.c.start_balance, "final_balance": self.balance, "return_pct": 100 * (self.balance / self.c.start_balance - 1), "baseline_no_cost_pnl": sum(t["baseline_no_cost_pnl"] for t in self.trades), "estimated_total_cost": sum(t["estimated_cost"] for t in self.trades), "trades": len(pnls), "wins": len(wins), "losses": len(losses), "win_rate_pct": 100 * len(wins) / len(pnls) if pnls else 0, "expectancy_usd": float(np.mean(pnls)) if pnls else 0, "profit_factor": sum(wins) / abs(sum(losses)) if losses and sum(losses) else None, "average_win": float(np.mean(wins)) if wins else 0, "average_loss": float(np.mean(losses)) if losses else 0, "max_drawdown_pct": 100 * max_dd, "active_zones_end": len(self._active_zones()), "setup_split": split, "evaluation_boundary": boundary.isoformat(), "period_split": period_split, "sample_warning": "Fewer than 30 trades; results are statistically weak." if len(pnls) < 30 else ""}
+
+    def export(self, output: Path, metrics: dict) -> None:
+        output.mkdir(parents=True, exist_ok=True)
+        zone_rows = []
+        for z in self.zones.values():
+            row = asdict(z); row["source_timeframes"] = ";".join(sorted(z.source_timeframes)); row["sides"] = ";".join(sorted(z.sides)); row["created_at"] = z.created_at.isoformat(); row["last_touch"] = z.last_touch.isoformat() if z.last_touch else ""; row["invalidated_at"] = z.invalidated_at.isoformat() if z.invalidated_at else ""
+            zone_rows.append(row)
+        pd.DataFrame(zone_rows).to_csv(output / "zones.csv", index=False)
+        pd.DataFrame(self.events).to_csv(output / "events.csv", index=False)
+        pd.DataFrame(self.trades).to_csv(output / "trades.csv", index=False)
+        (output / "summary.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
-def main():
-    """Run backtest"""
-    print("="*80)
-    print("GOLD BRAMHASTRA V2 - ZONE REJECTION STRATEGY")
-    print("="*80)
-    
-    # Load data
-    df = pd.read_csv('cache_xauusd_spot_mt5_1m_30d.csv', header=None, 
-                     names=['time', 'open', 'high', 'low', 'close'])
-    print(f"\n📊 Loaded {len(df)} 1-minute candles")
-    
-    # Initialize strategy
-    strategy = GoldBramhastraV2()
-    
-    # Detect zones
-    strategy.detect_zones_multi_timeframe(df)
-    
-    # Find optimal rejection %
-    strategy.find_optimal_rejection_pct(df)
-    
-    # Run backtest
-    metrics = strategy.backtest(df)
-    
-    # Print results
-    if metrics:
-        print("\n" + "="*80)
-        print("BACKTEST RESULTS")
-        print("="*80)
-        print(f"Start Balance:   ${metrics['start']:,.2f}")
-        print(f"Final Balance:   ${metrics['final']:,.2f}")
-        print(f"ROI:             {metrics['roi']:+.2f}%")
-        print(f"Total Trades:    {metrics['trades']}")
-        print(f"Win Rate:        {metrics['win_rate']:.1f}%")
-        print(f"Max Drawdown:    {metrics['max_dd']:.2f}%")
-        print(f"Zones Detected:  {metrics['zones']}")
-        print("="*80)
-        
-        # Save results
-        with open('gold_backtest_v2_results.json', 'w') as f:
-            json.dump({
-                'metrics': metrics,
-                'trades': strategy.trades,
-                'zones': strategy.zones
-            }, f, indent=2)
-        print("\n✅ Results saved to gold_backtest_v2_results.json")
+def compare_annotations(path: Path, zones: list[Zone], tolerance: float) -> dict:
+    if not path.exists():
+        return {"annotations": 0, "matched": 0, "coverage_pct": 0}
+    manual = pd.read_csv(path)
+    if manual.empty:
+        return {"annotations": 0, "matched": 0, "coverage_pct": 0}
+    required = {"line_id", "created_at", "timeframe", "price", "side", "notes"}
+    if not required.issubset(manual.columns):
+        raise ValueError(f"Annotation CSV requires columns: {sorted(required)}")
+    prices = [z.price for z in zones]
+    distances = [min((abs(float(p) - z) for z in prices), default=float("inf")) for p in manual.price]
+    matched = sum(d <= tolerance for d in distances)
+    return {"annotations": len(manual), "matched": matched, "coverage_pct": 100 * matched / len(manual), "mean_distance": float(np.mean(distances)) if distances else None}
+
+
+def parse_args() -> argparse.Namespace:
+    here = Path(__file__).resolve().parent
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--data", type=Path, default=here / "cache_xauusd_spot_mt5_1m_30d.csv")
+    p.add_argument("--annotations", type=Path, default=here / "manual_zones_template.csv")
+    p.add_argument("--output", type=Path, default=here / "backtest_output")
+    p.add_argument("--risk-pct", type=float, default=1.0)
+    p.add_argument("--spread", type=float, default=0.30)
+    p.add_argument("--slippage", type=float, default=0.10)
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = Config(risk_pct=args.risk_pct, spread=args.spread, slippage=args.slippage)
+    engine = ResearchBacktester(config)
+    metrics = engine.run(load_candles(args.data))
+    metrics["manual_zone_comparison"] = compare_annotations(args.annotations, list(engine.zones.values()), config.tolerance)
+    engine.export(args.output, metrics)
+    print(json.dumps(metrics, indent=2))
+    print(f"Artifacts: {args.output.resolve()}")
 
 
 if __name__ == "__main__":
