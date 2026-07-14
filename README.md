@@ -101,6 +101,32 @@ rolling zone set; treat them as indicative, not guarantees.
   A handful spike by luck (survivorship bias); most blow up. Do not size a live/funded
   account around reproducing them.
 
+## The "+5000% in 15 days" study (`tournament_simulation.py`)
+
+You asked how the FundingPips-Trial leaderboard traders (e.g. +5680%, 794 trades,
+**0% win ratio**) get those numbers. This script answers it *on data* with a Monte
+Carlo of a full ~50,000-trader field, bootstrapping the **real** per-trade outcomes
+of our zone strategy.
+
+```bash
+cd scripts
+python tournament_simulation.py --traders 50000 --trades 750
+```
+
+Two scenarios are simulated:
+
+| Scenario | What it models | Can it hit +5000%? |
+| --- | --- | --- |
+| **A — Honest strategy** | Real zone edge (+0.29R/trade) at its real swing cadence (~1 trade/15d) | **No** — 0% of a 50k field, even risking 50%/trade |
+| **B — Tournament sprint** | 750 high-frequency scalps with ~zero net edge, high risk/trade | **Yes, by luck** — at 10% risk, **83% blow up** but ~0.27% (≈137 traders) still moon |
+
+**Conclusion (data-backed):** +5000%/15d is **not a copyable strategy**. It is the
+loud survivor of a lottery — with tens of thousands gambling all-or-nothing at high
+leverage, a few randomly spike while thousands are wiped out and disappear from the
+board. The **0% win ratios** on that leaderboard are the fingerprint of exactly this
+all-or-nothing behavior. The honest positive-expectancy edge (Scenario A / the main
+backtest) is what actually survives.
+
 ## MetaTrader 5 data
 
 The MetaTrader5 Python API is **Windows-only**, so it cannot run on the Linux backtest
