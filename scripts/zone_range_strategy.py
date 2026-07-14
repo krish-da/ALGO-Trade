@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 """
-ZONE RANGE STRATEGY  (XAU/USD)
-==============================
-A clean, working rebuild of the "zone lines" idea from the trading charts.
+ZONE PRICE-ACTION STRATEGY  (XAU/USD)
+=====================================
+A clean, working rebuild of the "zone lines + price action" method from the
+trading charts.
 
-WHAT THE CHARTS ACTUALLY SHOW
------------------------------
-Horizontal support/resistance ("zone") lines, and price oscillating between
-them. Longs are opened when price rejects a SUPPORT zone (target = next zone
-up); shorts are opened when price rejects a RESISTANCE zone (target = next zone
-down). Stops sit just beyond the zone. With leverage and compounding, riding
-these swings repeatedly is what produced the large percentage gains.
+WHAT THE CHARTS ACTUALLY SHOW  (corrected)
+------------------------------------------
+Horizontal support/resistance ("zone") lines. At a zone the trader reads the
+candle and enters in the direction PRICE COMMITS TO -- following the move, not
+fading it. A decisive bullish candle off/through a zone -> LONG toward the next
+zone up; a decisive bearish candle -> SHORT toward the next zone down. This
+captures BOTH bounces and breakouts ("go where price moves"). Stops sit behind
+the confirmation candle / zone; the position trails to the next zone (or rides
+the trend when there is no next zone). Repeating these sniper entries with
+leverage and compounding is what produced the large percentage gains.
+
+TWO SIGNAL MODES
+----------------
+  price_action (default) : follow the committed direction (the real method).
+  reversion              : fade the zone (buy support / sell resistance) -- kept
+                           only for comparison.
 
 WHY THIS IS A REWRITE, NOT THE OLD SCRIPT
 -----------------------------------------
 The previous script's only reliable part was ZONE DETECTION. Its entry logic
 depended on a fragile "rejection percentile" that did not generalize. This file
-keeps clean zone detection and replaces the entry logic with a simple, robust
-range-rejection rule.
+keeps clean zone detection and rebuilds the entry logic around price action.
 
 HONESTY NOTE
 ------------
@@ -57,20 +66,24 @@ class Config:
     risk_pct: float = 10.0          # % of CURRENT balance risked per trade (compounding)
     max_risk_frac_of_equity: float = 0.95  # never risk more than this fraction of equity
 
-    # zone detection
-    swing_lookback: int = 3         # bars each side for a swing pivot
-    cluster_dist: float = 6.0       # $ distance to merge pivots into one zone
-    min_touches: int = 3            # min touches to keep a zone
+    # zone detection -- tuned for a FEW MAJOR levels (like the chart), not noise
+    swing_lookback: int = 8         # bars each side for a swing pivot (bigger = major swings)
+    cluster_dist: float = 15.0      # $ distance to merge pivots into one zone
+    min_touches: int = 4            # min touches to keep a zone
+    max_zones: int = 8              # keep only the N strongest zones by touch count
     round_step: float = 0.0         # snap zones to nearest $step (0 = off)
     rebuild_every: int = 500        # re-detect zones every N bars (rolling, walk-forward)
     build_window: int = 2000        # bars of history used to (re)build zones
 
     # entry / exit
+    signal_mode: str = "price_action"  # "price_action" (follow the move) or "reversion" (fade)
     touch_buffer: float = 3.0       # $ proximity that counts as "touching" a zone
-    sl_buffer: float = 2.5          # $ beyond the zone for the stop
+    sl_buffer: float = 2.5          # $ beyond the zone / candle for the stop
     min_sl_dist: float = 3.0        # floor on stop distance ($) to avoid noise-tight stops
     min_rr: float = 1.2             # skip trades whose target/stop ratio is below this
-    confirm_rejection: bool = True  # require the bar to close back off the zone
+    confirm_rejection: bool = True  # (reversion mode) require the bar to close back off the zone
+    body_frac: float = 0.5          # (price_action) min candle body / range to call it "decisive"
+    tp_fallback_rr: float = 2.0     # (price_action) target = this * risk when no next zone exists
     trail: bool = True              # trail the stop as price moves to target
     cooldown_bars: int = 2          # bars to wait after a trade before re-entering
 
@@ -154,13 +167,22 @@ def count_touches(level: float, df: pd.DataFrame, buffer: float) -> int:
 
 
 def detect_zones(df: pd.DataFrame, cfg: Config) -> list[float]:
-    """Build clean major S/R zones from swing pivots + clustering + touch filter."""
+    """Build a FEW clean major S/R zones from swing pivots + clustering, keeping
+    only the strongest levels by touch count (like the handful of lines drawn on
+    the chart)."""
     pivots = find_swings(df, cfg.swing_lookback)
     if cfg.round_step > 0:
         pivots = [round(p / cfg.round_step) * cfg.round_step for p in pivots]
     clustered = cluster_levels(pivots, cfg.cluster_dist)
-    zones = [z for z in clustered if count_touches(z, df, cfg.touch_buffer) >= cfg.min_touches]
-    return sorted(zones)
+    scored = [
+        (z, count_touches(z, df, cfg.touch_buffer))
+        for z in clustered
+    ]
+    scored = [(z, t) for z, t in scored if t >= cfg.min_touches]
+    # keep the strongest N zones, then return them sorted by price
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = scored[: cfg.max_zones]
+    return sorted(z for z, _ in top)
 
 
 # --------------------------------------------------------------------------- #
@@ -235,7 +257,50 @@ class ZoneRangeStrategy:
         zone, dist = self._nearest_zone(bar["close"])
         if zone is None or dist > self.cfg.touch_buffer:
             return
+        if self.cfg.signal_mode == "reversion":
+            self._reversion_enter(bar, idx, zone)
+        else:
+            self._price_action_enter(bar, idx, zone)
 
+    def _price_action_enter(self, bar, idx: int, zone: float):
+        """Follow the move. At a zone, read the candle and go WHERE PRICE COMMITS
+        (bounce OR breakout), confirmed by a decisive candle. This mirrors the
+        chart method: sniper entry in the direction of price action, then ride to
+        the next zone."""
+        c, h, l, o = bar["close"], bar["high"], bar["low"], bar["open"]
+        rng = h - l
+        if rng <= 0:
+            return
+        body = abs(c - o)
+        decisive = body >= self.cfg.body_frac * rng   # strong, committed candle
+
+        if not decisive:
+            return
+
+        # bullish commit -> LONG toward next zone up (works for a bounce off
+        # support AND a breakout above resistance). Sniper stop just BELOW the
+        # zone we launched from -> tight risk, big reward to the next zone.
+        if c > o and c > zone:
+            tp = self._target_above(zone)
+            entry = c
+            sl = zone - self.cfg.sl_buffer
+            if tp is None:                             # no zone above -> ride the trend
+                tp = entry + self.cfg.tp_fallback_rr * (entry - sl)
+            self._open("LONG", entry, sl, tp, zone, idx, bar)
+            return
+
+        # bearish commit -> SHORT toward next zone down (rejection off resistance
+        # AND breakdown below support). Sniper stop just ABOVE the zone.
+        if c < o and c < zone:
+            tp = self._target_below(zone)
+            entry = c
+            sl = zone + self.cfg.sl_buffer
+            if tp is None:                             # no zone below -> ride the trend
+                tp = entry - self.cfg.tp_fallback_rr * (sl - entry)
+            self._open("SHORT", entry, sl, tp, zone, idx, bar)
+
+    def _reversion_enter(self, bar, idx: int, zone: float):
+        """Original fade-the-zone logic (kept for comparison)."""
         c, h, l = bar["close"], bar["high"], bar["low"]
 
         # SUPPORT rejection -> LONG: bar dipped to/below zone but closed above it

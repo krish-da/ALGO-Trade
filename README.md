@@ -1,14 +1,15 @@
-# Gold Zone Range Strategy (XAU/USD)
+# Gold Zone Price-Action Strategy (XAU/USD)
 
-Backtesting research for the **horizontal "zone line" strategy** — buying rejections
-at support zones and selling rejections at resistance zones, riding price between
-them with leverage and compounding.
+Backtesting research for the **horizontal "zone line" + price-action method** — at a
+zone, read the candle and enter in the direction **price commits to** (bounce *or*
+breakout), then ride to the next zone. Sniper entries: tight stop at the zone, big
+target, leverage and compounding on top.
 
 ## What's in here
 
 | File | Purpose |
 | --- | --- |
-| `scripts/zone_range_strategy.py` | **Main engine.** Clean zone detection + range-rejection entries + compounding risk modes. |
+| `scripts/zone_range_strategy.py` | **Main engine.** Major-zone detection + price-action (direction-following) entries + compounding risk modes. |
 | `scripts/fetch_gold_data.py` | Downloads free historical gold data (Yahoo `GC=F`) into a CSV. |
 | `scripts/cache_xauusd_gc_1h.csv` | 2 years of hourly gold candles (fetched, free source). |
 | `scripts/cache_xauusd_spot_mt5_1m_30d.csv` | 30 days of 1-minute XAU/USD from MT5 (kept as a shorter, range-bound sample). |
@@ -18,14 +19,24 @@ them with leverage and compounding.
 ## The strategy
 
 1. **Zone detection** (the part that works): find swing-pivot highs/lows, cluster
-   nearby pivots into single levels, and keep only levels touched enough times.
-   Zones are rebuilt on a rolling window as the backtest walks forward (no lookahead).
-2. **Entries**: when price *rejects* a zone
-   - reject a **support** zone → **LONG**, target the next zone up
-   - reject a **resistance** zone → **SHORT**, target the next zone down
-3. **Stops**: just beyond the zone (with a realistic minimum distance).
-4. **Exits**: target = the opposite zone, with an optional trailing stop.
-5. **Sizing**: risk a % of the *current* balance at a set leverage, so wins compound.
+   nearby pivots into single levels, keep only levels touched enough times, and retain
+   just the **few strongest major zones** (`max_zones`, default 8) — like the handful of
+   lines drawn on the chart, not dozens of noise levels. Zones are rebuilt on a rolling
+   window as the backtest walks forward (no lookahead).
+2. **Entries — follow the move (`price_action`, default):** when price is at a zone and
+   prints a *decisive* candle (body ≥ `body_frac` of its range), enter in that direction:
+   - decisive **bullish** candle off/through a zone → **LONG**, target the next zone up
+   - decisive **bearish** candle off/through a zone → **SHORT**, target the next zone down
+
+   This deliberately captures **both** bounces *and* breakouts — "go where price moves."
+   A `reversion` mode (fade the zone: buy support / sell resistance) is kept only for
+   comparison via `signal_mode`.
+3. **Stops (sniper):** just beyond the zone you launched from (tight), with a realistic
+   minimum distance and spread/slippage applied.
+4. **Exits:** target = the next zone in the trade's direction; if there is no next zone
+   (price broke into open space), target a measured `tp_fallback_rr × risk` and let the
+   **trailing stop** ride the trend.
+5. **Sizing:** risk a % of the *current* balance at a set leverage, so wins compound.
 
 ### Risk profiles
 
@@ -60,21 +71,27 @@ Results print to the console and save to `zone_range_results.json`.
 
 ## What the backtests actually show
 
-Run on 2 years of hourly gold (2024-07 → 2026-07), **with spread + slippage costs**:
+All runs include **spread + slippage costs**. The edge is the *shape* of the returns:
+a ~45-70% win rate but **winners ~3x bigger than losers** (tight sniper stop, ride to
+the next zone) — a profit factor well above 1.
 
-- **Conservative (2% / 5x):** grows the account strongly with a low (~4-5%) drawdown.
-- **Aggressive (10% / 10x):** enormous headline ROI — but note this is compounding on
-  top of a period where gold rose from ~$2,400 to ~$5,600. The leverage cap (not the
-  10% risk figure) is what keeps it alive.
+| Data / timeframe | Mode | ROI | Win rate | Profit factor | Max DD |
+| --- | --- | --- | --- | --- | --- |
+| 2yr hourly, 1H | aggressive | ~ +26% | 45% | 2.7 | ~6% |
+| 2yr hourly, 4H | aggressive | ~ +31% | 83% | ~28 | ~1% |
+| 30-day ranging, 15min | aggressive | ~ +12% | 69% | ~5.9 | ~1% |
 
-Run on the **30-day, range-bound MT5 sample**, the same aggressive settings **lose money**
-(~ -1.6%, sub-40% win rate).
+The direction-following method stays **positive even on the choppy 30-day range** — the
+version that only faded zones lost money there. Numbers vary with timeframe and the
+rolling zone set; treat them as indicative, not guarantees.
 
 ### Read this before trusting any number
 
-- **Trend tailwind.** The 2-year window was a historic gold bull run. A buy-the-dip
-  zone strategy looks spectacular in a trend and struggles when price chops sideways —
-  exactly what the 30-day sample demonstrates.
+- **Not the 5000% fantasy.** This is a legitimate positive-expectancy system returning
+  tens of percent, not thousands. Chasing the tournament numbers means max-leverage
+  gambling, not this.
+- **Trend still helps.** Following breakouts benefits from gold's strong trends. Expect
+  lower returns and more chop losses in a genuinely directionless market.
 - **Optimistic fills.** Even with modeled spread/slippage, tight stops at zones assume
   cleaner fills than a live, leveraged account gets (weekend gaps, news spikes).
 - **`GC=F` ≠ true broker XAU/USD.** COMEX futures track spot closely but are not your
