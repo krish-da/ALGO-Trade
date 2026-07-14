@@ -113,18 +113,44 @@ cd scripts
 python tournament_simulation.py --traders 50000 --trades 750
 ```
 
-Two scenarios are simulated:
+Three scenarios are simulated:
 
 | Scenario | What it models | Can it hit +5000%? |
 | --- | --- | --- |
 | **A — Honest strategy** | Real zone edge (+0.29R/trade) at its real swing cadence (~1 trade/15d) | **No** — 0% of a 50k field, even risking 50%/trade |
 | **B — Tournament sprint** | 750 high-frequency scalps with ~zero net edge, high risk/trade | **Yes, by luck** — at 10% risk, **83% blow up** but ~0.27% (≈137 traders) still moon |
+| **C — July rules (below)** | 10% static floor + 5% daily + 1:100, real edge, house-money sizing | **Yes, rarely** — ~0.02% (≈10 traders) hit +5000%, **87% disqualified** |
 
-**Conclusion (data-backed):** +5000%/15d is **not a copyable strategy**. It is the
-loud survivor of a lottery — with tens of thousands gambling all-or-nothing at high
-leverage, a few randomly spike while thousands are wiped out and disappear from the
-board. The honest positive-expectancy edge (Scenario A / the main backtest) is what
-actually survives.
+## Does the strategy fit the FundingPips **July** tournament rules?
+
+The July competition rules (up to 50,000 entrants, top-20 + lucky-dip prizes):
+
+- **10% max loss — STATIC** (fixed at 90% of the *starting* balance; does **not** trail up with profit)
+- **5% daily loss limit** (counts closed + floating, resets 00:00 UTC+3)
+- **Leverage up to 1:100**, **no Expert Advisors**, **one account per person**, no unrealistic fills
+
+**Rule fit:** the strategy's aggressive mode uses ~10x leverage (well under 1:100), trades
+manually-drawn zones (not an EA), and can respect the 10% / 5% limits — so the **method is
+tournament-legal**. Legal, however, does **not** make +5000% repeatable.
+
+**How the +5000% is actually made under these exact rules (Scenario C, tested on data):**
+
+1. **The static floor is the secret.** Because max-loss is fixed at 90% of the *start* and
+   never trails up, every dollar of profit becomes a permanent cushion. Size each bet off the
+   **distance to that floor** ("house money") and you can bet big once ahead while **never**
+   breaching the max-loss rule — the simulation confirms a **0.0% static-floor DQ** rate.
+2. **The 5% daily limit is the real killer.** With house-money sizing, **~87% are disqualified**,
+   almost entirely by the daily limit during the first few days *before* a cushion exists.
+   (A 50-trades/day zero-edge gambler is daily-DQ'd ~100% of the time — hyper-scalping can't
+   survive these rules.)
+3. **The winner is a rule-compliant survivor.** Of 50,000 traders, only **~0.02% (≈10)** reach
+   +5000% — by catching a hot early streak, converting it to house money, then riding gold's
+   trend at high leverage. The thousands who caught a cold streak were DQ'd on day 1–3 and
+   vanish from the board. That's the same survivorship story, now *inside the rules*.
+
+**Bottom line:** yes, +5000% can happen legally within the July rules — but as the loud
+1-in-thousands survivor of a legal lottery, **not** a copyable edge. Trade the real zone edge
+for real money and treat the leaderboard number as survivorship.
 
 ## The "0% win ratio" clue — grid / floating test (`grid_floating_test.py`)
 
