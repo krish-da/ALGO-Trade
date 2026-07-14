@@ -1,0 +1,100 @@
+# Phase 0 Proof Report — Level-Reversal Strategy on Gold
+
+**Verdict: NO-GO** (gate required Z >= 2.0 + monthly stability + parameter robustness; all three failed)
+
+Method: fresh level engine (multi-TF fractal swing clustering + $5 round-number confluence),
+walk-forward with zero lookahead — at every bar, levels are computed only from past data.
+Strategy tested is the user's exact method: touch level → candle closes back away
+(rejection confirmation) → enter at close, SL beyond spike extreme + buffer, TP = next level.
+
+Data: 1 year of GC=F 1h (5,692 bars), 60 days of GC=F 15m (4,500 bars),
+25 days of MT5 spot XAUUSD 1m (user's cache, for chart-line validation).
+See `proof_chart.png` for visuals.
+
+---
+
+## 1. Chart-line validation (can the engine reproduce the user's hand-drawn lines?)
+
+| User line | Nearest engine level | Distance | Result |
+|---|---|---|---|
+| 4096.09 | 4096.33 | $0.24 | MATCH |
+| 4080.43 | 4074.99 | $5.44 | miss |
+| 4070.74 | 4074.99 | $4.25 | miss |
+| 4051.11 | 4050.37 | $0.74 | MATCH |
+
+2/4 matched exactly. But the engine produced **44 candidate levels** on that window —
+with that many lines, price is always "near a line". The two matches are consistent
+with selection from a dense grid, not with a uniquely predictive set of 4 lines.
+
+## 2. Main walk-forward result (1 year, 816 trades)
+
+| Metric | Value | User's claim |
+|---|---|---|
+| Trades | 816 | — |
+| Win rate | 32.0% | "near 100%" |
+| Avg R per trade | **-0.005** (zero) | high |
+| Avg win / avg loss | $21.4 / $8.3 | asymmetric — this part is real |
+| Avg favorable move (MFE) | **$14.8** | "$50–60 avg" |
+| Trades reaching $50 MFE | **4.5%** | "most" |
+| SL (spike + buffer) hit rate | **68%** | "mostly never touched" |
+
+## 3. Statistical tests
+
+- **Random-level Monte Carlo (500 runs, identical entry code):** random lines avg R
+  -0.001 ± 0.227; real levels -0.005 → **Z = -0.02**. The levels add exactly nothing
+  over randomly placed lines. 45.2% of random runs beat the strategy.
+- **Monthly stability: 6/13 positive months.** A coin flip. Crucially, **June 2026 was
+  +0.68 avg R** — an outlier month. This is why the method looked near-perfect recently:
+  the last few weeks genuinely were great, but that is the exception, not the rule
+  (Sep 2025 was -0.52; Jul 2026 so far -0.26).
+- **Parameter sensitivity: 1/9 positive cells.** No robust parameter region exists.
+- **15m confirmation TF (60 days): 638 trades, avg R -0.020.** Same result on the
+  user's actual entry timeframe.
+- **"$5 multiples" claim:** average swing distance from the nearest $5 multiple is
+  1.177 vs 1.250 expected under pure randomness (294 swings) — a ~6% effect,
+  far too weak to trade on.
+
+## 4. Why it FEELS like it works (important)
+
+1. **Dense line grids**: with 40+ plausible levels, every reversal happens "at a line"
+   in hindsight. Lines that get broken are forgotten/redrawn; lines that hold are remembered.
+2. **Recent outlier month**: June 2026 (+0.68 avg R) was genuinely exceptional. 25 days
+   of data showed +$130/oz; 13 months of data shows $0 expectancy.
+3. **Asymmetric R:R masks the losses**: avg win $21.4 vs avg loss $8.3 means losing
+   streaks feel small and wins feel like confirmation — but at a 32% win rate the
+   expectancy nets out to zero.
+
+## 5. The 5000% tournament traders (research conclusion)
+
+- Funding Pips tournament: free entry, ~50,000 participants, drawdown limits computed
+  from initial balance.
+- Winning pattern: survive early, then compound near-100% of the profit cushion per
+  trade on gold. ~12 consecutive winning doubles ≈ 4,000–5,600%.
+- "0% win ratio" with 794 trades on the leaderboard = averaging/martingale grids.
+- **It is survivorship bias on a free lottery.** With 50,000 free entries, coin-flip
+  traders alone produce several 5000% survivors every event. It is not a repeatable
+  skill and not transferable to real money. As a pure *tournament* tactic (free entry,
+  prize-only upside) max-aggression is rational — but expect to blow up in the vast
+  majority of attempts.
+
+## 6. Data-driven observations for a possible next iteration (needs approval)
+
+The one real signal in the data is the **asymmetry engine** (spike SL + line-to-line
+targets produce avg win 2.6x avg loss). The entry filter is what's broken. Candidate
+fixes worth testing before any more building:
+
+1. **Trade only in high-quality regimes** — the strategy's positive months cluster in
+   range-bound periods; a trend filter (e.g., skip when 4h ADX high / strong slope)
+   might isolate them.
+2. **Fewer, stronger levels** — require 4h-TF participation in every cluster
+   (44 levels is noise; the user's chart had 4).
+3. **Session filter** — gold reversal quality differs sharply by session
+   (Asia range vs London/NY breakouts); untested here.
+
+None of these are proven. Per the plan, nothing further gets built until a revised
+hypothesis passes the same gate (Z >= 2.0, stability, robustness).
+
+---
+
+*Generated by `scripts/prove_edge.py` (walk-forward, zero lookahead) and
+`scripts/make_report_chart.py`. Data: `scripts/data/`.*
