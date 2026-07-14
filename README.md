@@ -1,115 +1,100 @@
-# Gold Algorithmic Trading Strategy
+# Gold Zone Range Strategy (XAU/USD)
 
-## 🎯 Overview
+Backtesting research for the **horizontal "zone line" strategy** — buying rejections
+at support zones and selling rejections at resistance zones, riding price between
+them with leverage and compounding.
 
-This repository contains an algorithmic trading strategy for Gold (XAU/USD) based on multi-timeframe zone detection and rejection analysis.
+## What's in here
 
-## 📊 Strategy: Gold Bramhastra V2
+| File | Purpose |
+| --- | --- |
+| `scripts/zone_range_strategy.py` | **Main engine.** Clean zone detection + range-rejection entries + compounding risk modes. |
+| `scripts/fetch_gold_data.py` | Downloads free historical gold data (Yahoo `GC=F`) into a CSV. |
+| `scripts/cache_xauusd_gc_1h.csv` | 2 years of hourly gold candles (fetched, free source). |
+| `scripts/cache_xauusd_spot_mt5_1m_30d.csv` | 30 days of 1-minute XAU/USD from MT5 (kept as a shorter, range-bound sample). |
+| `scripts/gold_bramhastra_v2.py` | **Old script, kept for reference only.** Its rejection-percentile entry logic did not generalize; only its zone detection was reliable. Do not rely on it. |
+| `scripts/zone_range_results.json` | Latest backtest output (metrics + config + zones per mode). |
 
-### Core Concept
-The strategy identifies key support and resistance zones using multiple timeframes (15m, 1H, 4H) and trades based on price rejection patterns at these zones.
+## The strategy
 
-### Key Features
+1. **Zone detection** (the part that works): find swing-pivot highs/lows, cluster
+   nearby pivots into single levels, and keep only levels touched enough times.
+   Zones are rebuilt on a rolling window as the backtest walks forward (no lookahead).
+2. **Entries**: when price *rejects* a zone
+   - reject a **support** zone → **LONG**, target the next zone up
+   - reject a **resistance** zone → **SHORT**, target the next zone down
+3. **Stops**: just beyond the zone (with a realistic minimum distance).
+4. **Exits**: target = the opposite zone, with an optional trailing stop.
+5. **Sizing**: risk a % of the *current* balance at a set leverage, so wins compound.
 
-- **Multi-Timeframe Zone Detection**: Analyzes 15-minute, 1-hour, and 4-hour timeframes to identify major support and resistance levels
-- **Zone Clustering**: Combines nearby zones to create clean, major S/R levels
-- **Rejection Pattern Analysis**: Waits for confirmed price rejection at zones before entering trades
-- **Dynamic Risk Management**: 
-  - 10% risk per trade
-  - 10x leverage
-  - Trailing stop loss enabled
-  - Tight SL at rejection candle high/low
-- **Target Selection**: Automatically targets opposite zones
-- **Auto-Reverse**: Can reverse positions when hitting opposite zones
+### Risk profiles
 
-### Parameters
+| Mode | Risk / trade | Leverage | Notes |
+| --- | --- | --- | --- |
+| `conservative` | 2% | 5x | Survivable, realistic. |
+| `aggressive` | 10% | 10x | Mirrors the "10x + compound" chart notes. High variance. |
 
-```python
-Balance: $10,000
-Leverage: 10x
-Risk per Trade: 10%
-Zone Touch Threshold: 10 pips
-Minimum Touches: 2 touches to confirm zone
-Rejection Threshold: Calculated dynamically from data (30th percentile)
-```
-
-## 📁 Repository Contents
-
-- `scripts/gold_bramhastra_v2.py` - Main trading strategy script
-- `scripts/cache_xauusd_spot_mt5_1m_30d.csv` - Historical 1-minute OHLC data for XAU/USD (30 days)
-
-## 🚀 Usage
-
-### Prerequisites
+## Setup
 
 ```bash
-pip install pandas numpy
+pip install pandas numpy yfinance
 ```
 
-### Running the Backtest
+## Usage
 
 ```bash
 cd scripts
-python gold_bramhastra_v2.py
+
+# 1. (optional) refresh the free data
+python fetch_gold_data.py --interval 1h --period 2y
+
+# 2. run the backtest (both risk profiles)
+python zone_range_strategy.py --data cache_xauusd_gc_1h.csv --tf 1H --mode both
+
+# other examples
+python zone_range_strategy.py --mode aggressive --tf 4H
+python zone_range_strategy.py --mode conservative --risk 3 --leverage 5 --verbose
 ```
 
-### Output
+Results print to the console and save to `zone_range_results.json`.
 
-The script will:
-1. Detect zones from the historical data
-2. Calculate optimal rejection threshold
-3. Run backtest simulation
-4. Print performance metrics
-5. Save detailed results to `gold_backtest_v2_results.json`
+## What the backtests actually show
 
-### Expected Metrics
+Run on 2 years of hourly gold (2024-07 → 2026-07), **with spread + slippage costs**:
 
-- Start Balance
-- Final Balance
-- ROI (Return on Investment)
-- Total Trades
-- Win Rate
-- Maximum Drawdown
-- Number of Zones Detected
+- **Conservative (2% / 5x):** grows the account strongly with a low (~4-5%) drawdown.
+- **Aggressive (10% / 10x):** enormous headline ROI — but note this is compounding on
+  top of a period where gold rose from ~$2,400 to ~$5,600. The leverage cap (not the
+  10% risk figure) is what keeps it alive.
 
-## 📈 How It Works
+Run on the **30-day, range-bound MT5 sample**, the same aggressive settings **lose money**
+(~ -1.6%, sub-40% win rate).
 
-1. **Zone Detection**: 
-   - Converts 1-minute data to 15m, 1H, and 4H timeframes
-   - Identifies swing highs and lows in each timeframe
-   - Clusters nearby zones (within 20 pips)
-   - Filters zones requiring minimum 2 touches
+### Read this before trusting any number
 
-2. **Rejection Analysis**:
-   - Analyzes all historical zone touches
-   - Calculates rejection percentage (how much price moved away)
-   - Uses 30th percentile as optimal entry threshold
+- **Trend tailwind.** The 2-year window was a historic gold bull run. A buy-the-dip
+  zone strategy looks spectacular in a trend and struggles when price chops sideways —
+  exactly what the 30-day sample demonstrates.
+- **Optimistic fills.** Even with modeled spread/slippage, tight stops at zones assume
+  cleaner fills than a live, leveraged account gets (weekend gaps, news spikes).
+- **`GC=F` ≠ true broker XAU/USD.** COMEX futures track spot closely but are not your
+  broker's exact feed, spread, or swap.
+- **The 5000%+ leaderboard is not an edge.** Those FundingPips-Trial tournament numbers
+  come from free demo contests with tens of thousands of entrants using max leverage.
+  A handful spike by luck (survivorship bias); most blow up. Do not size a live/funded
+  account around reproducing them.
 
-3. **Trade Execution**:
-   - Waits for price to touch a zone
-   - Confirms rejection meets threshold percentage
-   - Enters trade with tight SL at rejection candle
-   - Sets TP at opposite zone
-   - Trails stop as price moves favorably
+## MetaTrader 5 data
 
-4. **Risk Management**:
-   - Position sizing based on 10% account risk
-   - Maximum position capped at $50k or 10x leverage
-   - Trailing stops to protect profits
-   - Auto-closes at opposite zones
+The MetaTrader5 Python API is **Windows-only**, so it cannot run on the Linux backtest
+host — that's why this repo uses free Yahoo data instead. To use real broker data,
+export a CSV from MT5 and point `--data` at it. The loader expects rows of
+`time,open,high,low,close` (unix seconds, no header).
 
-## ⚠️ Disclaimer
+**Security:** never commit or paste account credentials. If a password has been shared
+anywhere, rotate it immediately.
 
-This is a backtesting script for educational purposes only. Past performance does not guarantee future results. Always test thoroughly and use proper risk management when trading live.
+## Disclaimer
 
-## 📝 License
-
-Open source - feel free to modify and use for your own trading research.
-
-## 🤝 Contributing
-
-Feel free to fork, improve, and submit pull requests!
-
----
-
-**Note**: This strategy is based on zone rejection principles observed in actual trading charts. The zone detection matches real trading zones for more realistic backtest results.
+Educational backtesting only. Past performance does not predict future results.
+Leverage can wipe out an account faster than it grows it.
