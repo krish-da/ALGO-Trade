@@ -123,9 +123,38 @@ Two scenarios are simulated:
 **Conclusion (data-backed):** +5000%/15d is **not a copyable strategy**. It is the
 loud survivor of a lottery — with tens of thousands gambling all-or-nothing at high
 leverage, a few randomly spike while thousands are wiped out and disappear from the
-board. The **0% win ratios** on that leaderboard are the fingerprint of exactly this
-all-or-nothing behavior. The honest positive-expectancy edge (Scenario A / the main
-backtest) is what actually survives.
+board. The honest positive-expectancy edge (Scenario A / the main backtest) is what
+actually survives.
+
+## The "0% win ratio" clue — grid / floating test (`grid_floating_test.py`)
+
+A **0% win ratio next to 794 trades** is a huge tell: it almost certainly means the
+trades were **never closed** — they are **open, floating** positions. That is the
+signature of a **grid / martingale / averaging-in** system: keep opening lots, never
+realise a loss, and let a strong trend inflate the *floating* (unrealised) profit. The
+dashboard then shows a giant gain with a 0% *closed*-win ratio.
+
+This script runs exactly that on real gold data, over every rolling 15-day window:
+
+```bash
+cd scripts
+python grid_floating_test.py --leverage 400 --grid-step 3 --lot-frac 0.30
+```
+
+Results across 463 windows (never-close grid on 2yr gold):
+
+| Aggression | Blows up (margin call) | Flashes ≥ +5000% floating | Best flash | Median FINAL |
+| --- | --- | --- | --- | --- |
+| 100x, moderate lots | 44% | 0.0% | +1,633% | +17% |
+| 200x, big lots | 83% | 0.0% | +4,454% | **−100%** |
+| 400x, huge lots | **87%** | 0.2% | **+6,383%** | **−100%** |
+
+**Your hint was right** — and it completes the picture. To make the account *flash*
++5000%+ floating in 15 days you must grid at extreme leverage, and when you do, the
+account **blows up ~87% of the time** and the **median outcome is −100% (total wipeout)**.
+The leaderboard is screenshotting the rare *floating flash* of the survivors; the
+identical mechanism wiped out most of the field. Same lottery, same survivorship — the
+0% win ratio just tells you the winners hadn't closed (and mostly never would).
 
 ## MetaTrader 5 data
 
