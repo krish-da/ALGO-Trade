@@ -110,8 +110,17 @@ class GoldSniperV5Live:
         
         # Get account leverage from MT5 (not hardcoded!)
         account_info = mt5.account_info()
-        self.leverage = float(account_info.leverage)
+        self.account_leverage = float(account_info.leverage)
         self.margin_mode = account_info.margin_mode  # 0=retail, 1=exchange
+        
+        # Get symbol-specific leverage by testing margin
+        test_margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, self.symbol, 1.0, 4000.0)
+        if test_margin:
+            # Effective leverage = position_value / margin
+            position_value = 1.0 * self.symbol_info.trade_contract_size * 4000.0
+            self.leverage = position_value / test_margin
+        else:
+            self.leverage = 10.0  # Default fallback
         
         print(f"\n{'='*80}")
         print(f"GOLD SNIPER V5 - LIVE TRADING (EXACT BACKTEST LOGIC)")
@@ -121,7 +130,8 @@ class GoldSniperV5Live:
         print(f"Balance: ${account_info.balance:,.2f}")
         print(f"Fixed Capital: ${self.account_size:,.2f}")
         print(f"Phase: {self.phase.upper()}")
-        print(f"Leverage: 1:{int(self.leverage)} (from MT5)")
+        print(f"Account Leverage: 1:{int(self.account_leverage)}")
+        print(f"XAUUSD Effective Leverage: 1:{int(self.leverage)}")
         print(f"Risk: {self.risk_pct}% per trade")
         print(f"Margin Mode: {'Retail' if self.margin_mode == 0 else 'Exchange'}")
         print(f"{'='*80}\n")
@@ -511,29 +521,70 @@ class GoldSniperV5Live:
         if lots < 0.01:
             lots = 0.01
         
-        # MARGIN CHECK - Calculate required margin as % of account
+        # MARGIN CHECK - Use MT5's actual margin calculation
+        tick = mt5.symbol_info_tick(self.symbol)
+        price = tick.ask if direction == 'LONG' else tick.bid
+        
+        margin_required = mt5.order_calc_margin(
+            mt5.ORDER_TYPE_BUY if direction == 'LONG' else mt5.ORDER_TYPE_SELL,
+            self.symbol,
+            lots,
+            price
+        )
+        
+        if margin_required is None:
+            print(f"   ❌ Failed to calculate margin")
+            return False
+        
         account_info = mt5.account_info()
-        contract_size = 100  # XAUUSD standard
-        margin_required = (lots * contract_size * entry) / self.leverage
         margin_pct = (margin_required / account_info.balance) * 100
         
         print(f"\n💰 MARGIN CHECK:")
-        print(f"   Required: ${margin_required:,.2f} ({margin_pct:.1f}% of balance)")
-        print(f"   Free: ${account_info.margin_free:,.2f}")
+        print(f"   Lots: {lots}")
+        print(f"   Position Value: ${lots * self.symbol_info.trade_contract_size * price:,.2f}")
+        print(f"   Margin Required: ${margin_required:,.2f} ({margin_pct:.2f}% of balance)")
+        print(f"   Free Margin: ${account_info.margin_free:,.2f}")
         
-        if margin_required > account_info.margin_free:
-            print(f"   ❌ Insufficient margin! Reducing lot size...")
-            # Reduce lots to fit margin
-            max_lots = (account_info.margin_free * self.leverage * 0.9) / (contract_size * entry)
-            lots = round(max_lots, 2)
-            if lots < 0.01:
+        # Check if we have enough margin (use 95% safety margin)
+        if margin_required > account_info.margin_free * 0.95:
+            print(f"   ⚠️  Insufficient margin! Reducing lot size...")
+            
+            # Binary search for max lots we can use
+            low, high = 0.01, lots
+            max_lots = 0.01
+            
+            while high - low > 0.01:
+                mid = round((low + high) / 2, 2)
+                test_margin = mt5.order_calc_margin(
+                    mt5.ORDER_TYPE_BUY if direction == 'LONG' else mt5.ORDER_TYPE_SELL,
+                    self.symbol,
+                    mid,
+                    price
+                )
+                
+                if test_margin and test_margin <= account_info.margin_free * 0.95:
+                    max_lots = mid
+                    low = mid
+                else:
+                    high = mid
+            
+            if max_lots < 0.01:
                 print(f"   ❌ Cannot open position - insufficient margin")
                 return False
-            print(f"   ✅ Adjusted lots: {lots}")
+            
+            lots = max_lots
+            margin_required = mt5.order_calc_margin(
+                mt5.ORDER_TYPE_BUY if direction == 'LONG' else mt5.ORDER_TYPE_SELL,
+                self.symbol,
+                lots,
+                price
+            )
+            margin_pct = (margin_required / account_info.balance) * 100
+            print(f"   ✅ Adjusted to {lots} lots")
+            print(f"   New margin: ${margin_required:,.2f} ({margin_pct:.2f}%)")
         
         # Prepare MT5 order
         order_type = mt5.ORDER_TYPE_BUY if direction == 'LONG' else mt5.ORDER_TYPE_SELL
-        price = mt5.symbol_info_tick(self.symbol).ask if direction == 'LONG' else mt5.symbol_info_tick(self.symbol).bid
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
