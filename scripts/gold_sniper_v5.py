@@ -605,36 +605,6 @@ class GoldSniperV5:
                 self._close_trade(t, t['trailing_sl'], idx, 'TrailingSL')
             elif candle['low'] <= t['tp']:
                 self._close_trade(t, t['tp'], idx, 'TP')
-                # Activate trailing
-                if profit_pips >= self.trail_activation_pips:
-                    trail_dist = profit_pips * (1 - self.trail_lock_pct)
-                    new_sl = t['best_price'] - trail_dist
-                    if new_sl > t['trailing_sl']:
-                        t['trailing_sl'] = new_sl
-            
-            # Check exits
-            if candle['low'] <= t['trailing_sl']:
-                self._close_trade(t, t['trailing_sl'], idx, 'SL')
-            elif candle['high'] >= t['tp']:
-                self._close_trade(t, t['tp'], idx, 'TP')
-        
-        else:  # SHORT
-            if candle['low'] < t['best_price']:
-                t['best_price'] = candle['low']
-                
-                profit_pips = t['entry'] - t['best_price']
-                
-                if profit_pips >= self.trail_activation_pips:
-                    trail_dist = profit_pips * (1 - self.trail_lock_pct)
-                    new_sl = t['best_price'] + trail_dist
-                    if new_sl < t['trailing_sl']:
-                        t['trailing_sl'] = new_sl
-            
-            # Check exits
-            if candle['high'] >= t['trailing_sl']:
-                self._close_trade(t, t['trailing_sl'], idx, 'SL')
-            elif candle['low'] <= t['tp']:
-                self._close_trade(t, t['tp'], idx, 'TP')
     
     def _close_trade(self, t, exit_price, idx, reason):
         """Close trade - NO REINVESTMENT! Profits saved separately"""
