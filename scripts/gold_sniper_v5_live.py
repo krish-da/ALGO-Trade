@@ -26,12 +26,29 @@ class GoldSniperV5Live:
         self.symbol = symbol
         
         # ACCOUNT - NO COMPOUNDING! (SAME AS BACKTEST)
-        self.account_size = account_size  # FIXED - never changes
-        self.balance = account_size
-        self.start = account_size
+        self.account_size = account_size  # FIXED - never changes (for position sizing)
+        
+        # MT5 specific - connect first to get real balance
+        if not self._connect_mt5():
+            raise Exception("Failed to connect to MT5")
+        
+        self.symbol_info = mt5.symbol_info(self.symbol)
+        if self.symbol_info is None:
+            raise Exception(f"Symbol {self.symbol} not found")
+        
+        if not self.symbol_info.visible:
+            mt5.symbol_select(self.symbol, True)
+        
+        self.point = self.symbol_info.point
+        self.digits = self.symbol_info.digits
+        
+        # Get REAL balance from MT5
+        account_info = mt5.account_info()
+        self.balance = account_info.balance  # Track REAL balance
+        self.start = self.balance  # Starting balance for this session
         self.profit_withdrawn = 0
-        self.peak_balance = account_size
-        self.daily_start_balance = account_size
+        self.peak_balance = self.balance
+        self.daily_start_balance = self.balance
         
         # FUNDING PIPS PHASE (SAME AS BACKTEST)
         self.phase = phase
@@ -93,20 +110,6 @@ class GoldSniperV5Live:
         self.last_trade_time = None
         self.trades_today = 0
         self.current_date = None
-        
-        # MT5 specific
-        if not self._connect_mt5():
-            raise Exception("Failed to connect to MT5")
-        
-        self.symbol_info = mt5.symbol_info(self.symbol)
-        if self.symbol_info is None:
-            raise Exception(f"Symbol {self.symbol} not found")
-        
-        if not self.symbol_info.visible:
-            mt5.symbol_select(self.symbol, True)
-        
-        self.point = self.symbol_info.point
-        self.digits = self.symbol_info.digits
         
         # Get account leverage from MT5 (not hardcoded!)
         account_info = mt5.account_info()
@@ -225,7 +228,8 @@ class GoldSniperV5Live:
             if profit_pct >= self.fp_rules['profit_target_pct']:
                 self.breach_locked = True  # Lock after hitting target
                 self.can_trade = False
-                return True, f"✅ {self.phase.upper()} PASSED! Profit: {profit_pct:.2f}%"
+                self.breach_reason = f"{self.phase.upper()} PASSED! Profit: {profit_pct:.2f}%"
+                return True, f"✅ {self.breach_reason}"
         
         return True, "Compliant"
     
@@ -978,21 +982,43 @@ if __name__ == "__main__":
     print("="*80)
     
     # Configuration
-    ACCOUNT_SIZE = 10000  # Fixed capital for position sizing
-    PHASE = 'phase1'      # phase1, phase2, or master
-    SYMBOL = 'XAUUSD'     # Gold spot
+    ACCOUNT_SIZE = None  # Will use REAL MT5 balance
+    PHASE = 'master'     # phase1, phase2, or master (use master for funded/live accounts)
+    SYMBOL = 'XAUUSD'    # Gold spot
+    
+    # For testing/demo, you can override account size:
+    # ACCOUNT_SIZE = 10000  # Fixed capital for position sizing
     
     print(f"\nConfiguration:")
-    print(f"  Account Size: ${ACCOUNT_SIZE:,}")
+    print(f"  Account Size: {'AUTO (use MT5 balance)' if ACCOUNT_SIZE is None else f'${ACCOUNT_SIZE:,}'}")
     print(f"  Phase: {PHASE.upper()}")
     print(f"  Symbol: {SYMBOL}")
     print(f"  MT5 Login: {MT5_LOGIN}")
     print(f"  MT5 Server: {MT5_SERVER}")
+    print(f"\n⏱️  Auto-starting in 2 seconds... (Ctrl+C to stop)")
     
-    input("\nPress ENTER to start trading (Ctrl+C to stop)...")
+    time.sleep(2)
     
     # Create and run bot
     try:
+        # If ACCOUNT_SIZE is None, get it from MT5
+        if ACCOUNT_SIZE is None:
+            if not mt5.initialize():
+                print(f"❌ MT5 initialize() failed: {mt5.last_error()}")
+                exit(1)
+            
+            mt5.login(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+            account_info = mt5.account_info()
+            
+            if account_info:
+                ACCOUNT_SIZE = account_info.balance
+                print(f"\n✅ Using MT5 balance as account size: ${ACCOUNT_SIZE:,.2f}")
+            else:
+                print(f"❌ Could not get MT5 balance")
+                exit(1)
+            
+            mt5.shutdown()
+        
         bot = GoldSniperV5Live(
             account_size=ACCOUNT_SIZE,
             phase=PHASE,
