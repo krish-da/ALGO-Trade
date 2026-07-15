@@ -1,115 +1,210 @@
-# Gold Algorithmic Trading Strategy
+# Gold Sniper Trading Strategy
 
-## 🎯 Overview
+## 🎯 Strategy Overview
 
-This repository contains an algorithmic trading strategy for Gold (XAU/USD) based on multi-timeframe zone detection and rejection analysis.
+Algorithmic trading strategy for XAU/USD (Gold Spot) that uses multi-timeframe zone detection and volume profile POC (Point of Control) for sniper-style entries.
 
-## 📊 Strategy: Gold Bramhastra V2
-
-### Core Concept
-The strategy identifies key support and resistance zones using multiple timeframes (15m, 1H, 4H) and trades based on price rejection patterns at these zones.
-
-### Key Features
-
-- **Multi-Timeframe Zone Detection**: Analyzes 15-minute, 1-hour, and 4-hour timeframes to identify major support and resistance levels
-- **Zone Clustering**: Combines nearby zones to create clean, major S/R levels
-- **Rejection Pattern Analysis**: Waits for confirmed price rejection at zones before entering trades
-- **Dynamic Risk Management**: 
-  - 10% risk per trade
-  - 10x leverage
-  - Trailing stop loss enabled
-  - Tight SL at rejection candle high/low
-- **Target Selection**: Automatically targets opposite zones
-- **Auto-Reverse**: Can reverse positions when hitting opposite zones
-
-### Parameters
-
-```python
-Balance: $10,000
-Leverage: 10x
-Risk per Trade: 10%
-Zone Touch Threshold: 10 pips
-Minimum Touches: 2 touches to confirm zone
-Rejection Threshold: Calculated dynamically from data (30th percentile)
-```
-
-## 📁 Repository Contents
-
-- `scripts/gold_bramhastra_v2.py` - Main trading strategy script
-- `scripts/cache_xauusd_spot_mt5_1m_30d.csv` - Historical 1-minute OHLC data for XAU/USD (30 days)
-
-## 🚀 Usage
-
-### Prerequisites
-
-```bash
-pip install pandas numpy
-```
-
-### Running the Backtest
-
-```bash
-cd scripts
-python gold_bramhastra_v2.py
-```
-
-### Output
-
-The script will:
-1. Detect zones from the historical data
-2. Calculate optimal rejection threshold
-3. Run backtest simulation
-4. Print performance metrics
-5. Save detailed results to `gold_backtest_v2_results.json`
-
-### Expected Metrics
-
-- Start Balance
-- Final Balance
-- ROI (Return on Investment)
-- Total Trades
-- Win Rate
-- Maximum Drawdown
-- Number of Zones Detected
-
-## 📈 How It Works
-
-1. **Zone Detection**: 
-   - Converts 1-minute data to 15m, 1H, and 4H timeframes
-   - Identifies swing highs and lows in each timeframe
-   - Clusters nearby zones (within 20 pips)
-   - Filters zones requiring minimum 2 touches
-
-2. **Rejection Analysis**:
-   - Analyzes all historical zone touches
-   - Calculates rejection percentage (how much price moved away)
-   - Uses 30th percentile as optimal entry threshold
-
-3. **Trade Execution**:
-   - Waits for price to touch a zone
-   - Confirms rejection meets threshold percentage
-   - Enters trade with tight SL at rejection candle
-   - Sets TP at opposite zone
-   - Trails stop as price moves favorably
-
-4. **Risk Management**:
-   - Position sizing based on 10% account risk
-   - Maximum position capped at $50k or 10x leverage
-   - Trailing stops to protect profits
-   - Auto-closes at opposite zones
-
-## ⚠️ Disclaimer
-
-This is a backtesting script for educational purposes only. Past performance does not guarantee future results. Always test thoroughly and use proper risk management when trading live.
-
-## 📝 License
-
-Open source - feel free to modify and use for your own trading research.
-
-## 🤝 Contributing
-
-Feel free to fork, improve, and submit pull requests!
+**Key Features:**
+- Multi-timeframe zone detection (15m, 1H, 4H)
+- Volume Profile POC analysis
+- 5-minute setup identification
+- 1-minute precise execution
+- Dynamic TP extensions
+- Aggressive profit trailing
+- Funding Pips 2-Step Standard compliant
 
 ---
 
-**Note**: This strategy is based on zone rejection principles observed in actual trading charts. The zone detection matches real trading zones for more realistic backtest results.
+## 🔧 Strategy Components
+
+### 1. Multi-Timeframe Zone Detection
+- Analyzes 15-minute, 1-hour, and 4-hour charts
+- Identifies swing highs and lows
+- Weights by timeframe importance (4H > 1H > 15M)
+- Clusters nearby zones to remove noise
+- Result: ~30 clean support/resistance zones
+
+### 2. Volume Profile POC
+- Calculates Point of Control from 1-day volume profile
+- POC = price level with highest trading activity
+- Acts as strong support/resistance
+- Best setups occur at Zone + POC confluence
+
+### 3. Entry Logic
+**5-Minute Analysis:**
+- Monitors for price near zone or POC (±15 pips)
+- Confirms breakout of recent structure (8-candle high/low)
+- Requires minimum breakout confirmation (+3 pips)
+- Quality filters: max 5 trades/day, proper spacing
+
+**1-Minute Execution:**
+- Precise entry on 1-minute candles
+- Tight stop loss: 3-8 pips (median 3 pips)
+- SL below recent low (LONG) or above recent high (SHORT)
+- Dynamic TP: Extends as price moves, captures full trends
+
+### 4. Trade Management
+- **Dynamic TP**: Extends by 15 pips when 70% reached (max 5 extensions)
+- **Aggressive Trailing**: Activates at 1.5:1 R:R, locks 60% profit
+- **Trailing Updates**: Every 5 pips of favorable movement
+- **Risk**: 2% per trade (Funding Pips compliant)
+
+### 5. Funding Pips Compliance
+- **Phase 1**: 8% profit target, 10% max DD, 5% daily loss
+- **Phase 2**: 5% profit target, 10% max DD, 5% daily loss
+- **Master**: 5% daily loss, 8% trailing DD
+- **60% Rule**: Tracks if single trade makes >60% of profit
+- **Fixed Capital**: No profit reinvestment (trade with account_size)
+
+---
+
+## 📁 Repository Contents
+
+```
+scripts/
+├── gold_sniper_v5.py              # Main trading strategy
+└── cache_xauusd_spot_mt5_1m_30d.csv   # XAU/USD SPOT 1-min data (25 days)
+```
+
+---
+
+## 🚀 How to Run
+
+### Prerequisites
+```bash
+pip install pandas numpy matplotlib
+```
+
+### Run Backtest
+```bash
+cd scripts
+python gold_sniper_v5.py
+```
+
+**Output:**
+- Console: Performance metrics, trade log, Funding Pips compliance
+- File: `backtest_results.json` (if enabled)
+
+---
+
+## 📈 How It Works
+
+### Trading Flow
+
+1. **Initialization**
+   - Load 1-minute OHLC data
+   - Detect zones from 15m, 1H, 4H timeframes
+   - Calculate POC levels from daily volume profile
+   - Result: ~30 zones + ~17 POC levels
+
+2. **Real-Time Loop** (Every 1-Minute Candle)
+   
+   **Step 1: Check for Setup (5-Min)**
+   - Is price near zone/POC?
+   - Has recent structure broken?
+   - Breakout confirmed?
+   
+   **Step 2: Execute Entry (1-Min)**
+   - Enter at 1-min close
+   - Set tight SL (3-8 pips)
+   - Set initial TP at next zone/POC
+   - Verify minimum 1:2 R:R
+   
+   **Step 3: Manage Position**
+   - Monitor every 1-min candle
+   - Extend TP dynamically as price moves
+   - Activate trailing at 1.5:1 R:R
+   - Update trail every 5 pips
+   - Exit on SL/TP hit
+
+---
+
+## 🔍 Key Insights
+
+### Why This Works
+
+1. **True Sniper Entries**
+   - 5-min identifies quality setups
+   - 1-min executes at precise points
+   - Tight SL (3-8 pips) = low risk
+   - If wrong, small loss; if right, big gain
+
+2. **Dynamic Profit Capture**
+   - No fixed TP cap
+   - Extends TP as price moves
+   - Captures extended trends (60%+ more profit)
+   - Aggressive trailing locks gains
+
+3. **Quality Filters**
+   - Not every zone touch = trade
+   - Requires structure confirmation
+   - Max 5 trades/day (prevents overtrading)
+   - Proper trade spacing (10 candles minimum)
+
+4. **Risk Management**
+   - Funding Pips compliant (2% per trade)
+   - Fixed capital (no compounding risk)
+   - Daily loss limits enforced
+   - Max drawdown protection
+
+---
+
+## ⚠️ Important Notes
+
+### Backtest Limitations
+- **Period**: 25 days (June-July 2026)
+- **Slippage**: Not modeled
+- **Spread**: Not included (SPOT data)
+- **Commission**: Not included
+
+### Recommendations
+1. Test on longer time periods
+2. Test different market conditions (trending, ranging, volatile)
+3. Add realistic slippage/commission for live
+4. Start with demo account
+5. Follow proper risk management
+
+---
+
+## 🎓 Strategy Philosophy
+
+### What Makes a Good Entry
+❌ **Bad**: "Price touched zone, enter immediately"  
+✅ **Good**: "Price near zone + 5-min structure break + 1-min confirmation"
+
+### Why Tight Stops Work
+- Correct setup = price runs immediately
+- Wrong setup = exit fast with small loss
+- No "room to breathe" = no room to lose money
+
+### Quality Over Quantity
+- 95 quality trades >> 137 mediocre trades
+- Better to wait for perfect setup than force trades
+
+---
+
+## 📜 License
+
+Open source - use for your own trading research and development.
+
+---
+
+## ⚡ Quick Start
+
+```bash
+# Clone repository
+git clone https://github.com/krish-da/ALGO-Trade.git
+cd ALGO-Trade/scripts
+
+# Run backtest
+python gold_sniper_v5.py
+```
+
+---
+
+**Disclaimer**: Past performance does not guarantee future results. This is for educational purposes only. Always use proper risk management when trading live.
+
+**Data**: XAU/USD SPOT from MetaTrader 5  
+**Strategy**: Zone + POC + Momentum Breakout  
+**Execution**: 5-min analysis, 1-min entry  
+**Compliance**: Funding Pips 2-Step Standard
