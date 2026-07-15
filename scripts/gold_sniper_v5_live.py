@@ -35,8 +35,13 @@ class GoldSniperV5Live:
         
         # FUNDING PIPS PHASE (SAME AS BACKTEST)
         self.phase = phase
-        self.leverage = 10.0
+        self.leverage = None  # Will read from MT5
         self.risk_pct = 2.0
+        
+        # HARD LOCKS FOR FUNDING PIPS
+        self.breach_locked = False
+        self.breach_reason = ""
+        self.can_trade = True
         
         # ZONE DETECTION (SAME AS BACKTEST)
         self.zone_lookback_15m = 8
@@ -103,14 +108,22 @@ class GoldSniperV5Live:
         self.point = self.symbol_info.point
         self.digits = self.symbol_info.digits
         
+        # Get account leverage from MT5 (not hardcoded!)
+        account_info = mt5.account_info()
+        self.leverage = float(account_info.leverage)
+        self.margin_mode = account_info.margin_mode  # 0=retail, 1=exchange
+        
         print(f"\n{'='*80}")
         print(f"GOLD SNIPER V5 - LIVE TRADING (EXACT BACKTEST LOGIC)")
         print(f"{'='*80}")
         print(f"Symbol: {self.symbol}")
         print(f"Account: {MT5_LOGIN} @ {MT5_SERVER}")
+        print(f"Balance: ${account_info.balance:,.2f}")
         print(f"Fixed Capital: ${self.account_size:,.2f}")
         print(f"Phase: {self.phase.upper()}")
-        print(f"Risk: {self.risk_pct}% | Leverage: {self.leverage}x")
+        print(f"Leverage: 1:{int(self.leverage)} (from MT5)")
+        print(f"Risk: {self.risk_pct}% per trade")
+        print(f"Margin Mode: {'Retail' if self.margin_mode == 0 else 'Exchange'}")
         print(f"{'='*80}\n")
 
     def _connect_mt5(self):
@@ -169,20 +182,30 @@ class GoldSniperV5Live:
         return rules[self.phase]
 
     def check_funding_pips_compliance(self):
-        """EXACT SAME as backtest"""
+        """EXACT SAME as backtest + HARD LOCKS"""
+        # If already breached, stay locked
+        if self.breach_locked:
+            return False, f"🔒 LOCKED: {self.breach_reason}"
+        
         # Daily loss check
         daily_loss_usd = self.daily_start_balance - self.balance
         daily_loss_pct = (daily_loss_usd / self.account_size) * 100
         
         if daily_loss_pct >= self.fp_rules['daily_loss_limit_pct']:
-            return False, f"❌ BREACH: Daily loss {daily_loss_pct:.2f}% >= {self.fp_rules['daily_loss_limit_pct']}%"
+            self.breach_locked = True
+            self.can_trade = False
+            self.breach_reason = f"Daily loss {daily_loss_pct:.2f}% >= {self.fp_rules['daily_loss_limit_pct']}%"
+            return False, f"❌ BREACH: {self.breach_reason}"
         
         # Max drawdown check
         drawdown_usd = self.peak_balance - self.balance
         drawdown_pct = (drawdown_usd / self.account_size) * 100
         
         if drawdown_pct >= self.fp_rules['max_drawdown_pct']:
-            return False, f"❌ BREACH: Max DD {drawdown_pct:.2f}% >= {self.fp_rules['max_drawdown_pct']}%"
+            self.breach_locked = True
+            self.can_trade = False
+            self.breach_reason = f"Max DD {drawdown_pct:.2f}% >= {self.fp_rules['max_drawdown_pct']}%"
+            return False, f"❌ BREACH: {self.breach_reason}"
         
         # Profit target check (phases only)
         if self.phase in ['phase1', 'phase2']:
@@ -190,6 +213,8 @@ class GoldSniperV5Live:
             profit_pct = (profit_usd / self.account_size) * 100
             
             if profit_pct >= self.fp_rules['profit_target_pct']:
+                self.breach_locked = True  # Lock after hitting target
+                self.can_trade = False
                 return True, f"✅ {self.phase.upper()} PASSED! Profit: {profit_pct:.2f}%"
         
         return True, "Compliant"
@@ -459,7 +484,12 @@ class GoldSniperV5Live:
         return entry, sl, tp
 
     def _enter_trade(self, direction, entry, sl, tp, level, is_confluence):
-        """EXACT SAME as backtest - Enter new trade with MT5 execution"""
+        """EXACT SAME as backtest - Enter new trade with MT5 execution + MARGIN CHECK"""
+        # Check if allowed to trade
+        if not self.can_trade or self.breach_locked:
+            print(f"🔒 Trading locked: {self.breach_reason}")
+            return False
+        
         # Calculate position size (EXACT SAME as backtest)
         risk_usd = self.account_size * (self.risk_pct / 100)
         sl_dist = abs(entry - sl)
@@ -472,7 +502,7 @@ class GoldSniperV5Live:
         if potential_loss > max_loss_per_trade:
             qty = max_loss_per_trade / sl_dist
         
-        # Leverage cap (EXACT SAME)
+        # Leverage cap (use actual MT5 leverage)
         max_qty = (self.account_size * self.leverage) / entry
         qty = min(qty, max_qty)
         
@@ -480,6 +510,26 @@ class GoldSniperV5Live:
         lots = round(qty * 0.01, 2)
         if lots < 0.01:
             lots = 0.01
+        
+        # MARGIN CHECK - Calculate required margin as % of account
+        account_info = mt5.account_info()
+        contract_size = 100  # XAUUSD standard
+        margin_required = (lots * contract_size * entry) / self.leverage
+        margin_pct = (margin_required / account_info.balance) * 100
+        
+        print(f"\n💰 MARGIN CHECK:")
+        print(f"   Required: ${margin_required:,.2f} ({margin_pct:.1f}% of balance)")
+        print(f"   Free: ${account_info.margin_free:,.2f}")
+        
+        if margin_required > account_info.margin_free:
+            print(f"   ❌ Insufficient margin! Reducing lot size...")
+            # Reduce lots to fit margin
+            max_lots = (account_info.margin_free * self.leverage * 0.9) / (contract_size * entry)
+            lots = round(max_lots, 2)
+            if lots < 0.01:
+                print(f"   ❌ Cannot open position - insufficient margin")
+                return False
+            print(f"   ✅ Adjusted lots: {lots}")
         
         # Prepare MT5 order
         order_type = mt5.ORDER_TYPE_BUY if direction == 'LONG' else mt5.ORDER_TYPE_SELL
@@ -538,6 +588,7 @@ class GoldSniperV5Live:
         print(f"   TP: ${tp:.2f} | R:R = 1:{rr:.1f}")
         print(f"   Level: ${level:.2f} | Lots: {lots} | Ticket: {result.order}")
         print(f"   FIXED Capital: ${self.account_size:,.2f}")
+        print(f"   Margin Used: {margin_pct:.1f}%")
         print(f"{'='*70}")
         
         return True
@@ -692,6 +743,41 @@ class GoldSniperV5Live:
         
         print(f"💰 {reason} | {pips:.1f}p | P&L: ${pnl:+,.2f}")
         print(f"   Account: ${self.account_size:,.2f} (FIXED) | Profit: ${profit_withdrawn:+,.2f}")
+    
+    def _emergency_close_all(self, reason):
+        """Close all positions on Funding Pips breach"""
+        print(f"\n🚨 EMERGENCY: {reason}")
+        print("   Closing all open positions...")
+        
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions and len(positions) > 0:
+            for pos in positions:
+                # Close position
+                close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+                price = mt5.symbol_info_tick(self.symbol).bid if close_type == mt5.ORDER_TYPE_SELL else mt5.symbol_info_tick(self.symbol).ask
+                
+                request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": self.symbol,
+                    "volume": pos.volume,
+                    "type": close_type,
+                    "position": pos.ticket,
+                    "price": price,
+                    "deviation": 20,
+                    "magic": 123456,
+                    "comment": f"Emergency_{reason}",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                
+                result = mt5.order_send(request)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    print(f"   ✅ Closed ticket {pos.ticket}")
+                else:
+                    print(f"   ❌ Failed to close {pos.ticket}: {result.comment if result else 'unknown'}")
+        
+        self.active_trade = None
+        print(f"   🔒 Trading LOCKED until reset")
 
     def run(self):
         """Main trading loop - EXACT SAME logic flow as backtest"""
@@ -734,14 +820,32 @@ class GoldSniperV5Live:
                     if current_date != self.current_date:
                         self.current_date = current_date
                         self.trades_today = 0
-                        self.daily_start_balance = self.balance
+                        
+                        # Update daily baseline with CURRENT balance (from MT5)
+                        account = mt5.account_info()
+                        if account:
+                            self.balance = account.balance
+                            self.daily_start_balance = self.balance
+                        
                         self.daily_pnl = 0
+                        
+                        # Reset daily loss lock (but NOT max DD or target locks!)
+                        if self.breach_locked and "Daily loss" in self.breach_reason:
+                            self.breach_locked = False
+                            self.can_trade = True
+                            self.breach_reason = ""
+                            print(f"   🔓 Daily loss limit reset")
+                        
                         print(f"\n📅 New Day: {current_date} | Balance: ${self.balance:,.2f}")
                     
                     # Check compliance (EXACT SAME)
                     compliant, message = self.check_funding_pips_compliance()
                     if not compliant:
-                        print(f"\n⚠️  STOPPING: {message}")
+                        print(f"\n⚠️  FUNDING PIPS BREACH: {message}")
+                        # Emergency close all positions
+                        self._emergency_close_all(message)
+                        print("\n🛑 Bot stopped - Funding Pips rules violated")
+                        print("   Trading locked until daily/phase reset")
                         break
                     
                     # Manage active trade (EXACT SAME)
