@@ -6,8 +6,8 @@ Test MT5 connection and order placement with TP/SL
 import MetaTrader5 as mt5
 import time
 
-MT5_LOGIN = 40000134945
-MT5_PASSWORD = "5AV^(1*lV"
+MT5_LOGIN = 40000179483
+MT5_PASSWORD = "&Ij4-#r3d"
 MT5_SERVER = "FundingPips-Trial"
 
 print("="*80)

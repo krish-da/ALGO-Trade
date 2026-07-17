@@ -16,8 +16,8 @@ import time
 import json
 
 # MT5 CREDENTIALS - FUNDING PIPS TRIAL
-MT5_LOGIN = 40000134945
-MT5_PASSWORD = "5AV^(1*lV"
+MT5_LOGIN = 40000179483
+MT5_PASSWORD = "&Ij4-#r3d"
 MT5_SERVER = "FundingPips-Trial"
 
 class GoldSniperV5Live:
