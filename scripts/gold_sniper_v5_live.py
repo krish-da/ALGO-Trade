@@ -955,9 +955,10 @@ class GoldSniperV5Live:
                                 if nearest_dist <= self.zone_proximity_5m:
                                     print(f"   ✅ NEAR ZONE! Within {self.zone_proximity_5m} pips")
                                     
-                                    # Check breakout
-                                    recent_high = df_5m.tail(self.breakout_lookback_5m)['high'].max()
-                                    recent_low = df_5m.tail(self.breakout_lookback_5m)['low'].min()
+                                    # Check breakout (SAME AS analyze_5m_setup - EXCLUDES current candle)
+                                    recent = df_5m.iloc[-self.breakout_lookback_5m-1:-1]  # Last 8 PREVIOUS candles
+                                    recent_high = recent['high'].max()
+                                    recent_low = recent['low'].min()
                                     
                                     print(f"   Recent High: ${recent_high:.2f}")
                                     print(f"   Recent Low: ${recent_low:.2f}")
@@ -971,7 +972,7 @@ class GoldSniperV5Live:
                                 else:
                                     print(f"   ⏳ Waiting for price to approach zone (need within {self.zone_proximity_5m} pips)")
                                 
-                                # Analyze 5-min setup (EXACT SAME)
+                                # Analyze 5-min setup (EXACT SAME as backtest)
                                 direction, zone_level, is_confluence = self.analyze_5m_setup(df_5m)
                                 
                                 if direction:
