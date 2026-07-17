@@ -78,7 +78,7 @@ class GoldSniperV5Live:
         
         # RISK MANAGEMENT (SAME AS BACKTEST)
         self.min_rr_ratio = 2.0
-        self.max_trade_distance = 100
+        self.max_trade_distance = 50  # MATCHES BACKTEST (overwritten value)
         
         # DYNAMIC TP & AGGRESSIVE TRAILING (SAME AS BACKTEST)
         self.initial_tp_multiplier = 3.0
