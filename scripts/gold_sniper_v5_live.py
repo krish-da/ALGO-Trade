@@ -15,10 +15,10 @@ from datetime import datetime, timedelta
 import time
 import json
 
-# MT5 DEMO CREDENTIALS
-MT5_LOGIN = 1840535
-MT5_PASSWORD = "%Yv11M*k"
-MT5_SERVER = "FTTrading-Server"
+# MT5 CREDENTIALS - FUNDING PIPS TRIAL
+MT5_LOGIN = 40000134945
+MT5_PASSWORD = "5AV^(1*lV"
+MT5_SERVER = "FundingPips-Trial"
 
 class GoldSniperV5Live:
     def __init__(self, account_size=10000, phase='phase1', symbol='XAUUSD'):
@@ -983,15 +983,16 @@ if __name__ == "__main__":
     
     # Configuration
     ACCOUNT_SIZE = None  # Will use REAL MT5 balance
-    PHASE = 'master'     # phase1, phase2, or master (use master for funded/live accounts)
+    PHASE = None         # Auto-detect based on balance
     SYMBOL = 'XAUUSD'    # Gold spot
     
-    # For testing/demo, you can override account size:
+    # For testing/demo, you can override:
     # ACCOUNT_SIZE = 10000  # Fixed capital for position sizing
+    # PHASE = 'phase1'      # Force specific phase
     
     print(f"\nConfiguration:")
     print(f"  Account Size: {'AUTO (use MT5 balance)' if ACCOUNT_SIZE is None else f'${ACCOUNT_SIZE:,}'}")
-    print(f"  Phase: {PHASE.upper()}")
+    print(f"  Phase: {'AUTO (detect from balance)' if PHASE is None else PHASE.upper()}")
     print(f"  Symbol: {SYMBOL}")
     print(f"  MT5 Login: {MT5_LOGIN}")
     print(f"  MT5 Server: {MT5_SERVER}")
@@ -1018,6 +1019,18 @@ if __name__ == "__main__":
                 exit(1)
             
             mt5.shutdown()
+        
+        # Auto-detect phase if not set
+        if PHASE is None:
+            if ACCOUNT_SIZE <= 25000:
+                PHASE = 'phase1'
+                print(f"✅ Auto-detected Phase: PHASE1 (balance ≤ $25K)")
+            elif ACCOUNT_SIZE <= 100000:
+                PHASE = 'phase2'
+                print(f"✅ Auto-detected Phase: PHASE2 (balance $25K-$100K)")
+            else:
+                PHASE = 'master'
+                print(f"✅ Auto-detected Phase: MASTER (balance > $100K)")
         
         bot = GoldSniperV5Live(
             account_size=ACCOUNT_SIZE,

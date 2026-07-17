@@ -3,9 +3,9 @@
 
 import MetaTrader5 as mt5
 
-MT5_LOGIN = 1840535
-MT5_PASSWORD = "%Yv11M*k"
-MT5_SERVER = "FTTrading-Server"
+MT5_LOGIN = 40000134945
+MT5_PASSWORD = "5AV^(1*lV"
+MT5_SERVER = "FundingPips-Trial"
 
 mt5.initialize()
 mt5.login(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
