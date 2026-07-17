@@ -446,11 +446,7 @@ class GoldSniperV5Live:
         
         current = df_1m.iloc[-1]
         
-        # ✅ CRITICAL CHECK: Must be near zone (EXACT SAME AS BACKTEST)
-        if abs(current['close'] - zone_level) > self.entry_zone_touch:
-            return None, None, None  # Too far from zone - reject entry
-        
-        # Entry: Current price (EXACT SAME)
+        # Entry: Current price (EXACT SAME - backtest has NO zone distance check here)
         entry = current['close']
         
         # SL: Tight stop based on direction (EXACT SAME)
@@ -997,13 +993,7 @@ class GoldSniperV5Live:
                                         if not success:
                                             print(f"   ❌ Order failed")
                                     else:
-                                        # Get current price to show why rejected
-                                        tick = mt5.symbol_info_tick(self.symbol)
-                                        dist_from_zone = abs(tick.bid - zone_level)
-                                        print(f"   ❌ 1-min entry rejected:")
-                                        print(f"      Current price: ${tick.bid:.2f}")
-                                        print(f"      Zone: ${zone_level:.2f}")
-                                        print(f"      Distance: {dist_from_zone:.1f} pips (need ≤{self.entry_zone_touch} pips)")
+                                        print(f"   ❌ 1-min entry rejected: Risk/Reward or SL criteria not met")
                                 else:
                                     if nearest_dist <= self.zone_proximity_5m:
                                         print(f"   ℹ️  Near zone but no valid breakout setup")
