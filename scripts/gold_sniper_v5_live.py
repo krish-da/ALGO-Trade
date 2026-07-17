@@ -446,6 +446,10 @@ class GoldSniperV5Live:
         
         current = df_1m.iloc[-1]
         
+        # ✅ CRITICAL CHECK: Must be near zone (EXACT SAME AS BACKTEST)
+        if abs(current['close'] - zone_level) > self.entry_zone_touch:
+            return None, None, None  # Too far from zone - reject entry
+        
         # Entry: Current price (EXACT SAME)
         entry = current['close']
         
