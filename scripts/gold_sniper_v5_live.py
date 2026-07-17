@@ -981,12 +981,14 @@ class GoldSniperV5Live:
                                 if direction:
                                     print(f"\n   🎯 SETUP FOUND: {direction} @ ${zone_level:.2f}")
                                     print(f"   {'✨ CONFLUENCE (Zone + POC)' if is_confluence else '📍 Zone only'}")
+                                    print(f"   Checking 1-min entry conditions...")
                                     
                                     # Execute on 1-min (EXACT SAME)
                                     entry, sl, tp = self.execute_1m_entry(direction, zone_level)
                                     
                                     if entry is not None:
                                         print(f"   ✅ 1-min entry confirmed @ ${entry:.2f}")
+                                        print(f"   SL: ${sl:.2f} | TP: ${tp:.2f}")
                                         print(f"   Executing order...")
                                         
                                         # Enter trade (EXACT SAME)
@@ -995,7 +997,13 @@ class GoldSniperV5Live:
                                         if not success:
                                             print(f"   ❌ Order failed")
                                     else:
-                                        print(f"   ⏳ No 1-min entry yet (checking precision)")
+                                        # Get current price to show why rejected
+                                        tick = mt5.symbol_info_tick(self.symbol)
+                                        dist_from_zone = abs(tick.bid - zone_level)
+                                        print(f"   ❌ 1-min entry rejected:")
+                                        print(f"      Current price: ${tick.bid:.2f}")
+                                        print(f"      Zone: ${zone_level:.2f}")
+                                        print(f"      Distance: {dist_from_zone:.1f} pips (need ≤{self.entry_zone_touch} pips)")
                                 else:
                                     if nearest_dist <= self.zone_proximity_5m:
                                         print(f"   ℹ️  Near zone but no valid breakout setup")
