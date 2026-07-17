@@ -399,7 +399,8 @@ class GoldSniperV5Live:
         if len(df_5m) < self.breakout_lookback_5m + 5:
             return None, None, False
         
-        current = df_5m.iloc[-1]
+        # Use COMPLETED candle (iloc[-2]) not incomplete (iloc[-1])
+        current = df_5m.iloc[-2]
         
         # 1. Check if near zone or POC (EXACT SAME)
         nearby_zone = None
@@ -423,7 +424,8 @@ class GoldSniperV5Live:
         is_confluence = (nearby_zone is not None and nearby_poc is not None)
         
         # 2. Check 5-min structure break (EXACT SAME)
-        recent = df_5m.iloc[-self.breakout_lookback_5m-1:-1]
+        # Get 8 candles BEFORE current (positions -10 to -3)
+        recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]
         recent_high = recent['high'].max()
         recent_low = recent['low'].min()
         
@@ -927,11 +929,12 @@ class GoldSniperV5Live:
                         df_5m = self.get_historical_data(mt5.TIMEFRAME_M5, 20)
                         
                         if df_5m is not None and len(df_5m) > 0:
-                            # Only analyze on new 5-min candle (EXACT SAME)
-                            current_5m_time = df_5m.iloc[-1]['datetime']
+                            # Only analyze on new 5-min candle (use COMPLETED candle)
+                            if len(df_5m) >= 2:
+                                current_5m_time = df_5m.iloc[-2]['datetime']  # Last COMPLETED candle
                             
-                            if last_5m_candle_time is None or current_5m_time > last_5m_candle_time:
-                                last_5m_candle_time = current_5m_time
+                                if last_5m_candle_time is None or current_5m_time > last_5m_candle_time:
+                                    last_5m_candle_time = current_5m_time
                                 
                                 # Get current price
                                 tick = mt5.symbol_info_tick(self.symbol)
@@ -955,18 +958,21 @@ class GoldSniperV5Live:
                                 if nearest_dist <= self.zone_proximity_5m:
                                     print(f"   ✅ NEAR ZONE! Within {self.zone_proximity_5m} pips")
                                     
-                                    # Check breakout (SAME AS analyze_5m_setup - EXCLUDES current candle)
-                                    recent = df_5m.iloc[-self.breakout_lookback_5m-1:-1]  # Last 8 PREVIOUS candles
+                                    # Check breakout using COMPLETED candles (EXCLUDES incomplete)
+                                    recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]  # Last 8 COMPLETED candles before current
                                     recent_high = recent['high'].max()
                                     recent_low = recent['low'].min()
+                                    
+                                    # Get COMPLETED candle close
+                                    completed_close = df_5m.iloc[-2]['close']
                                     
                                     print(f"   Recent High: ${recent_high:.2f}")
                                     print(f"   Recent Low: ${recent_low:.2f}")
                                     
-                                    if current_price > recent_high + self.breakout_threshold:
-                                        print(f"   🚀 BULLISH BREAKOUT! ${(current_price - recent_high):.1f} pips above high")
-                                    elif current_price < recent_low - self.breakout_threshold:
-                                        print(f"   🔻 BEARISH BREAKOUT! ${(recent_low - current_price):.1f} pips below low")
+                                    if completed_close > recent_high + self.breakout_threshold:
+                                        print(f"   🚀 BULLISH BREAKOUT! ${(completed_close - recent_high):.1f} pips above high")
+                                    elif completed_close < recent_low - self.breakout_threshold:
+                                        print(f"   🔻 BEARISH BREAKOUT! ${(recent_low - completed_close):.1f} pips below low")
                                     else:
                                         print(f"   ⏳ No breakout yet (need +{self.breakout_threshold} pip confirmation)")
                                 else:
