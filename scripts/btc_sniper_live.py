@@ -195,8 +195,12 @@ class BTCSniperLive:
         if len(df_5m) < self.breakout_lookback_5m + 5:
             return None, None, False
         
-        # Use COMPLETED candle (iloc[-2])
+        # ⚠️ CRITICAL: Use COMPLETED candle (iloc[-2])
+        # Gold bot bug was using iloc[-1] (incomplete candle)
         current = df_5m.iloc[-2]
+        
+        print(f"   🔍 Analyzing candle: {current['timestamp']} (completed)")
+        print(f"      Close: ${current['close']:,.2f}")
         
         # Check if near zone or POC
         nearby_zone = None
@@ -218,19 +222,26 @@ class BTCSniperLive:
         level = nearby_zone if nearby_zone else nearby_poc
         is_confluence = (nearby_zone is not None and nearby_poc is not None)
         
-        # Check 5-min structure break (use 8 PREVIOUS candles)
+        # ⚠️ CRITICAL: Check 5-min structure break using 8 PREVIOUS candles ONLY
+        # iloc[-10:-2] gives us 8 candles BEFORE the current completed candle
         recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]
         recent_high = recent['high'].max()
         recent_low = recent['low'].min()
         
+        print(f"      Recent 8 candles range: ${recent_low:,.2f} - ${recent_high:,.2f}")
+        print(f"      Breakout threshold: ${self.breakout_threshold}")
+        
         # LONG: Break above
         if current['close'] > recent_high + self.breakout_threshold:
+            print(f"      ✅ LONG BREAKOUT: ${current['close']:,.2f} > ${recent_high + self.breakout_threshold:,.2f}")
             return 'LONG', level, is_confluence
         
         # SHORT: Break below
         if current['close'] < recent_low - self.breakout_threshold:
+            print(f"      ✅ SHORT BREAKOUT: ${current['close']:,.2f} < ${recent_low - self.breakout_threshold:,.2f}")
             return 'SHORT', level, is_confluence
         
+        print(f"      ❌ No breakout detected")
         return None, None, False
     
     def execute_1m_entry(self, direction, zone_level):
@@ -239,10 +250,15 @@ class BTCSniperLive:
         if df_1m is None or len(df_1m) < 6:
             return None, None, None
         
+        # ⚠️ CRITICAL: Use last completed candle for entry
         current = df_1m.iloc[-1]
         entry = current['close']
         
-        # SL: Tight stop based on direction
+        print(f"\n   📊 Entry Analysis:")
+        print(f"      Entry price: ${entry:,.2f}")
+        print(f"      Zone level: ${zone_level:,.2f}")
+        
+        # SL: Tight stop based on direction (using 5 PREVIOUS candles)
         if direction == 'LONG':
             recent_low = df_1m.iloc[-6:-1]['low'].min()
             sl_option1 = recent_low - self.min_sl_distance
@@ -254,6 +270,9 @@ class BTCSniperLive:
                 sl = entry - self.max_sl_distance
             elif sl_dist < self.min_sl_distance:
                 sl = entry - self.min_sl_distance
+            
+            print(f"      Recent low: ${recent_low:,.2f}")
+            print(f"      SL: ${sl:,.2f} (distance: ${sl_dist:,.2f})")
         
         else:  # SHORT
             recent_high = df_1m.iloc[-6:-1]['high'].max()
@@ -266,6 +285,9 @@ class BTCSniperLive:
                 sl = entry + self.max_sl_distance
             elif sl_dist < self.min_sl_distance:
                 sl = entry + self.min_sl_distance
+            
+            print(f"      Recent high: ${recent_high:,.2f}")
+            print(f"      SL: ${sl:,.2f} (distance: ${sl_dist:,.2f})")
         
         # TP: Next zone/POC
         all_levels = sorted(set(self.zones + self.poc_levels))
@@ -277,16 +299,24 @@ class BTCSniperLive:
             tp_candidates = [lvl for lvl in all_levels if lvl < entry - self.breakout_threshold*2]
             tp = tp_candidates[-1] if tp_candidates else entry - self.max_trade_distance/2
         
+        print(f"      TP: ${tp:,.2f}")
+        
         # Check R:R
         risk = abs(entry - sl)
         reward = abs(tp - entry)
+        rr_ratio = reward / risk
         
-        if reward / risk < self.min_rr_ratio:
+        print(f"      Risk: ${risk:,.2f} | Reward: ${reward:,.2f} | R:R: {rr_ratio:.2f}")
+        
+        if rr_ratio < self.min_rr_ratio:
+            print(f"      ❌ R:R too low (need {self.min_rr_ratio})")
             return None, None, None
         
         if reward > self.max_trade_distance:
+            print(f"      ❌ TP too far (max {self.max_trade_distance})")
             return None, None, None
         
+        print(f"      ✅ Entry criteria met!")
         return entry, sl, tp
     
     def _enter_trade(self, direction, entry, sl, tp, zone_level, is_confluence):
@@ -677,27 +707,65 @@ class BTCSniperLive:
 
 
 if __name__ == "__main__":
-    # CONFIGURATION
-    API_KEY = "YOUR_BINANCE_API_KEY"
-    API_SECRET = "YOUR_BINANCE_API_SECRET"
+    # Import configuration
+    try:
+        from config_live import (
+            API_KEY, API_SECRET, ACCOUNT_SIZE, RISK_PCT,
+            TESTNET, MAX_TRADES_PER_DAY, MIN_TRADE_SPACING
+        )
+    except ImportError:
+        print("\n❌ ERROR: config_live.py not found!")
+        print("   Create config_live.py with your API credentials")
+        exit(1)
     
-    ACCOUNT_SIZE = None  # None = use real balance, or set fixed amount
-    RISK_PCT = 2.0  # 2% risk per trade
+    # Validate config
+    if API_KEY == "YOUR_BINANCE_API_KEY_HERE" or API_SECRET == "YOUR_BINANCE_API_SECRET_HERE":
+        print("\n❌ ERROR: Please update config_live.py with your real API keys!")
+        exit(1)
     
-    print("\n⚠️  LIVE TRADING WARNING:")
-    print("   This bot trades with REAL MONEY on Binance Futures")
-    print("   Make sure you understand the risks")
-    print("   Start with small capital to test\n")
+    print("\n" + "="*80)
+    print("BTC SNIPER LIVE BOT")
+    print("="*80)
+    print(f"\n📋 Configuration:")
+    print(f"   Mode: {'🧪 TESTNET (Paper Trading)' if TESTNET else '💰 LIVE (Real Money)'}")
+    print(f"   Account Size: {'Auto (use balance)' if ACCOUNT_SIZE is None else f'${ACCOUNT_SIZE:,.2f}'}")
+    print(f"   Risk per Trade: {RISK_PCT}%")
+    print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY}")
+    print(f"   Trade Spacing: {MIN_TRADE_SPACING} minutes")
     
-    confirm = input("Type 'START' to begin live trading: ")
+    print("\n" + "="*80)
+    print("⚠️  SAFETY CHECKS")
+    print("="*80)
+    print("\nBefore starting, confirm you have:")
+    print("  ✓ Run validate_live_logic.py (validation passed)")
+    print("  ✓ Enabled Binance Futures trading on your account")
+    print("  ✓ USDT in your Futures wallet")
+    print("  ✓ API keys with correct permissions (NO withdrawal)")
+    print("  ✓ Understanding of leverage and risks")
+    
+    if not TESTNET:
+        print("\n⚠️  YOU ARE ABOUT TO TRADE WITH REAL MONEY!")
+        print("   This bot uses Binance Futures with leverage")
+        print("   You can lose money quickly")
+        print("   Start with small capital to test")
+    
+    print("\n" + "="*80)
+    confirm = input("\nType 'START' to begin trading: ")
     
     if confirm.upper() == 'START':
+        print("\n🚀 Starting bot...")
+        
         bot = BTCSniperLive(
             api_key=API_KEY,
             api_secret=API_SECRET,
             account_size=ACCOUNT_SIZE,
             risk_pct=RISK_PCT
         )
+        
+        # Override daily limit from config
+        bot.max_trades_per_day = MAX_TRADES_PER_DAY
+        bot.min_5m_candles_between = MIN_TRADE_SPACING // 5
+        
         bot.run()
     else:
         print("❌ Aborted")
