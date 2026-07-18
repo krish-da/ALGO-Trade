@@ -17,56 +17,55 @@ class CryptoSniperBacktest:
         self.balance = account_size
         self.risk_pct = risk_pct
         
-        # CRYPTO-OPTIMIZED PARAMETERS
+        # CRYPTO-OPTIMIZED PARAMETERS V2
         if 'BTC' in symbol:
-            # Bitcoin parameters (less volatile, wider zones)
-            self.zone_lookback_15m = 12
-            self.zone_lookback_1h = 16
-            self.zone_lookback_4h = 8
-            self.cluster_distance = 100  # $100 for BTC
-            
-            self.zone_proximity_5m = 150  # $150 proximity
-            self.breakout_lookback_5m = 10
-            self.breakout_threshold = 50  # $50 breakout confirmation
-            
-            self.entry_zone_touch = 80
-            self.max_sl_distance = 200  # $200 max SL
-            self.min_sl_distance = 80   # $80 min SL
-            
-            self.min_rr_ratio = 2.0
-            self.max_trade_distance = 800  # $800 max TP
-            
-        else:  # ETH
-            # Ethereum parameters (more volatile, tighter zones)
-            self.zone_lookback_15m = 10
+            # BTC - OPTIMIZED FOR WIN RATE & ROI
+            self.zone_lookback_15m = 10  # More responsive zones
             self.zone_lookback_1h = 14
-            self.zone_lookback_4h = 7
-            self.cluster_distance = 15  # $15 for ETH
+            self.zone_lookback_4h = 6
+            self.cluster_distance = 80  # Tighter clustering = more zones
             
-            self.zone_proximity_5m = 20  # $20 proximity
-            self.breakout_lookback_5m = 10
-            self.breakout_threshold = 8  # $8 breakout confirmation
+            self.zone_proximity_5m = 120  # Closer to zone = better entries
+            self.breakout_lookback_5m = 8  # Faster breakout detection
+            self.breakout_threshold = 40  # Lower threshold = more trades
             
-            self.entry_zone_touch = 12
-            self.max_sl_distance = 30  # $30 max SL
-            self.min_sl_distance = 10  # $10 min SL
+            self.entry_zone_touch = 60
+            self.max_sl_distance = 150  # Tighter SL = better R:R
+            self.min_sl_distance = 50   # Minimum stop
             
-            self.min_rr_ratio = 2.0
-            self.max_trade_distance = 120  # $120 max TP
+            self.min_rr_ratio = 2.5  # Higher R:R = better quality
+            self.max_trade_distance = 600  # Reasonable TP distance
+            
+        else:  # ETH - OPTIMIZED FOR MORE TRADES
+            self.zone_lookback_15m = 8  # More zones
+            self.zone_lookback_1h = 12
+            self.zone_lookback_4h = 5
+            self.cluster_distance = 10  # Tighter clustering
+            
+            self.zone_proximity_5m = 25  # Wider proximity = more setups
+            self.breakout_lookback_5m = 8
+            self.breakout_threshold = 6  # Lower threshold = more breakouts
+            
+            self.entry_zone_touch = 10
+            self.max_sl_distance = 25  # Tighter SL
+            self.min_sl_distance = 8
+            
+            self.min_rr_ratio = 2.5  # Higher quality
+            self.max_trade_distance = 100  # Reasonable TP
         
-        # Dynamic TP & Trailing
-        self.initial_tp_multiplier = 3.0
-        self.tp_extension_trigger_pct = 0.7
-        self.tp_extension_distance = self.breakout_threshold * 3
-        self.max_tp_extensions = 5
+        # Dynamic TP & Trailing - OPTIMIZED
+        self.initial_tp_multiplier = 3.5  # More aggressive initial TP
+        self.tp_extension_trigger_pct = 0.75  # Extend later = lock more profit
+        self.tp_extension_distance = self.breakout_threshold * 2
+        self.max_tp_extensions = 3  # Fewer extensions = take profit faster
         
-        self.trail_activation_rr = 1.5
-        self.trail_lock_pct = 0.6
-        self.trail_step_pips = self.breakout_threshold
+        self.trail_activation_rr = 1.8  # Trail later = more profit
+        self.trail_lock_pct = 0.7  # Lock more profit (70%)
+        self.trail_step_pips = self.breakout_threshold * 0.5
         
-        # Trade filtering
-        self.min_5m_candles_between = 12
-        self.max_trades_per_day = 10
+        # Trade filtering - BALANCED
+        self.min_5m_candles_between = 8  # Allow more trades
+        self.max_trades_per_day = 15  # Increased daily limit
         
         # State
         self.zones = []
