@@ -186,7 +186,7 @@ class BTCSniperLive:
         return df
 
     def detect_zones_enhanced(self):
-        """EXACT SAME as backtest - Enhanced zone detection"""
+        """EXACT SAME as backtest - Zone detection"""
         print("\n🔍 Detecting zones...")
         
         # Get 1-minute data for analysis
@@ -216,32 +216,30 @@ class BTCSniperLive:
         
         df_1m.reset_index(inplace=True)
         
-        # Find swing zones
-        zones_15m = self._find_swing_zones(df_15m, self.zone_lookback_15m)
-        zones_1h = self._find_swing_zones(df_1h, self.zone_lookback_1h)
-        zones_4h = self._find_swing_zones(df_4h, self.zone_lookback_4h)
+        all_zones = []
         
-        # Weight by timeframe (EXACT SAME as backtest)
-        weighted_zones = []
-        for z in zones_4h:
-            weighted_zones.extend([z] * 3)
-        for z in zones_1h:
-            weighted_zones.extend([z] * 2)
-        weighted_zones.extend(zones_15m)
+        # 15m zones - EXACT SAME AS BACKTEST
+        for i in range(self.zone_lookback_15m, len(df_15m)):
+            window = df_15m.iloc[i-self.zone_lookback_15m:i]
+            high_idx = window['high'].idxmax()
+            low_idx = window['low'].idxmin()
+            all_zones.extend([window.loc[high_idx, 'high'], window.loc[low_idx, 'low']])
         
-        # Cluster
-        clustered = self._cluster_zones(weighted_zones)
+        # 1h zones - EXACT SAME AS BACKTEST
+        for i in range(self.zone_lookback_1h, len(df_1h)):
+            window = df_1h.iloc[i-self.zone_lookback_1h:i]
+            high_idx = window['high'].idxmax()
+            low_idx = window['low'].idxmin()
+            all_zones.extend([window.loc[high_idx, 'high'], window.loc[low_idx, 'low']])
         
-        # Calculate strength (EXACT SAME as backtest)
-        zone_strength = self._calculate_zone_strength(clustered, df_1m)
+        # 4h zones - EXACT SAME AS BACKTEST
+        for i in range(self.zone_lookback_4h, len(df_4h)):
+            window = df_4h.iloc[i-self.zone_lookback_4h:i]
+            high_idx = window['high'].idxmax()
+            low_idx = window['low'].idxmin()
+            all_zones.extend([window.loc[high_idx, 'high'], window.loc[low_idx, 'low']])
         
-        # Take top 20-30 zones (EXACT SAME as backtest)
-        sorted_zones = sorted(zone_strength.items(), key=lambda x: x[1], reverse=True)
-        self.zones = [z[0] for z in sorted_zones[:30]]
-        self.zones.sort()
-        
-        self.zone_metadata = {z: {'strength': s} for z, s in sorted_zones[:30]}
-        
+        self.zones = self._cluster_zones(all_zones)
         print(f"✅ Detected {len(self.zones)} zones")
         return True
 
@@ -306,7 +304,7 @@ class BTCSniperLive:
         return strength
 
     def calculate_poc_levels(self):
-        """EXACT SAME as backtest"""
+        """EXACT SAME as backtest - Calculate POC from volume profile"""
         print("\n📊 Calculating POC levels...")
         
         df_1m = self.get_historical_data(mt5.TIMEFRAME_M1, 10000)
@@ -314,23 +312,23 @@ class BTCSniperLive:
             print("❌ Failed to get 1-minute data")
             return False
         
-        df_1m['date'] = df_1m['datetime'].dt.date
-        poc_levels = []
+        # EXACT SAME AS BACKTEST
+        price_min = df_1m['low'].min()
+        price_max = df_1m['high'].max()
         
-        for date in df_1m['date'].unique()[-30:]:  # Last 30 days
-            day_data = df_1m[df_1m['date'] == date]
-            price_volume = {}
-            
-            for _, candle in day_data.iterrows():
-                price = round(candle['close'], 0)
-                vol = candle['tick_volume']
-                if price not in price_volume:
-                    price_volume[price] = 0
-                price_volume[price] += vol
-            
-            if price_volume:
-                poc = max(price_volume.items(), key=lambda x: x[1])[0]
-                poc_levels.append(poc)
+        bins = 100
+        price_range = np.linspace(price_min, price_max, bins)
+        volume_profile = np.zeros(bins - 1)
+        
+        for _, row in df_1m.iterrows():
+            for i in range(len(price_range) - 1):
+                if price_range[i] <= row['close'] < price_range[i+1]:
+                    volume_profile[i] += row['tick_volume']
+                    break
+        
+        # Find top POC levels
+        top_indices = np.argsort(volume_profile)[-10:]
+        poc_levels = [price_range[i] for i in top_indices]
         
         self.poc_levels = self._cluster_zones(poc_levels)
         print(f"✅ Found {len(self.poc_levels)} POC levels")
@@ -389,14 +387,12 @@ class BTCSniperLive:
             return None, None, None
         
         current = df_1m.iloc[-1]
-        
-        # Entry: Current price (EXACT SAME - backtest has NO zone distance check here)
         entry = current['close']
         
-        # SL: Tight stop based on direction (EXACT SAME)
+        # SL: Tight stop based on direction (EXACT SAME AS BACKTEST)
         if direction == 'LONG':
             recent_low = df_1m.iloc[-6:-1]['low'].min()
-            sl_option1 = recent_low - 1
+            sl_option1 = recent_low - self.min_sl_distance
             sl_option2 = zone_level - self.max_sl_distance
             sl = max(sl_option1, sl_option2)
             
@@ -408,7 +404,7 @@ class BTCSniperLive:
         
         else:  # SHORT
             recent_high = df_1m.iloc[-6:-1]['high'].max()
-            sl_option1 = recent_high + 1
+            sl_option1 = recent_high + self.min_sl_distance
             sl_option2 = zone_level + self.max_sl_distance
             sl = min(sl_option1, sl_option2)
             
@@ -418,24 +414,23 @@ class BTCSniperLive:
             elif sl_dist < self.min_sl_distance:
                 sl = entry + self.min_sl_distance
         
-        # TP: Next zone/POC (EXACT SAME)
+        # TP: Next zone/POC (EXACT SAME AS BACKTEST)
         all_levels = sorted(set(self.zones + self.poc_levels))
         
         if direction == 'LONG':
-            tp_candidates = [lvl for lvl in all_levels if lvl > entry + 10]
-            tp = tp_candidates[0] if tp_candidates else entry + 30
+            tp_candidates = [lvl for lvl in all_levels if lvl > entry + self.breakout_threshold*2]
+            tp = tp_candidates[0] if tp_candidates else entry + self.max_trade_distance/2
         else:
-            tp_candidates = [lvl for lvl in all_levels if lvl < entry - 10]
-            tp = tp_candidates[-1] if tp_candidates else entry - 30
+            tp_candidates = [lvl for lvl in all_levels if lvl < entry - self.breakout_threshold*2]
+            tp = tp_candidates[-1] if tp_candidates else entry - self.max_trade_distance/2
         
-        # Check risk:reward (EXACT SAME)
+        # Check risk:reward (EXACT SAME AS BACKTEST)
         risk = abs(entry - sl)
         reward = abs(tp - entry)
         
         if reward / risk < self.min_rr_ratio:
             return None, None, None
         
-        # Check TP not too far (EXACT SAME)
         if reward > self.max_trade_distance:
             return None, None, None
         
