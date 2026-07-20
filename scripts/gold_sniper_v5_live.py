@@ -55,10 +55,8 @@ class GoldSniperV5Live:
         self.leverage = None  # Will read from MT5
         self.risk_pct = 2.0
         
-        # HARD LOCKS FOR FUNDING PIPS
-        self.breach_locked = False
-        self.breach_reason = ""
-        self.can_trade = True
+        # HARD LOCKS FOR FUNDING PIPS - REMOVED!
+        self.can_trade = True  # Always allow trading
         
         # ZONE DETECTION (SAME AS BACKTEST)
         self.zone_lookback_15m = 8
@@ -195,43 +193,8 @@ class GoldSniperV5Live:
         return rules[self.phase]
 
     def check_funding_pips_compliance(self):
-        """EXACT SAME as backtest + HARD LOCKS"""
-        # If already breached, stay locked
-        if self.breach_locked:
-            return False, f"🔒 LOCKED: {self.breach_reason}"
-        
-        # Daily loss check
-        daily_loss_usd = self.daily_start_balance - self.balance
-        daily_loss_pct = (daily_loss_usd / self.account_size) * 100
-        
-        if daily_loss_pct >= self.fp_rules['daily_loss_limit_pct']:
-            self.breach_locked = True
-            self.can_trade = False
-            self.breach_reason = f"Daily loss {daily_loss_pct:.2f}% >= {self.fp_rules['daily_loss_limit_pct']}%"
-            return False, f"❌ BREACH: {self.breach_reason}"
-        
-        # Max drawdown check
-        drawdown_usd = self.peak_balance - self.balance
-        drawdown_pct = (drawdown_usd / self.account_size) * 100
-        
-        if drawdown_pct >= self.fp_rules['max_drawdown_pct']:
-            self.breach_locked = True
-            self.can_trade = False
-            self.breach_reason = f"Max DD {drawdown_pct:.2f}% >= {self.fp_rules['max_drawdown_pct']}%"
-            return False, f"❌ BREACH: {self.breach_reason}"
-        
-        # Profit target check (phases only)
-        if self.phase in ['phase1', 'phase2']:
-            profit_usd = self.balance - self.account_size
-            profit_pct = (profit_usd / self.account_size) * 100
-            
-            if profit_pct >= self.fp_rules['profit_target_pct']:
-                self.breach_locked = True  # Lock after hitting target
-                self.can_trade = False
-                self.breach_reason = f"{self.phase.upper()} PASSED! Profit: {profit_pct:.2f}%"
-                return True, f"✅ {self.breach_reason}"
-        
-        return True, "Compliant"
+        """For tracking only - NO BLOCKING"""
+        return True, "Monitoring only"
     
     def get_historical_data(self, timeframe_mt5, bars=1000):
         """Get historical data from MT5"""
@@ -500,18 +463,13 @@ class GoldSniperV5Live:
         return entry, sl, tp
 
     def _enter_trade(self, direction, entry, sl, tp, level, is_confluence):
-        """EXACT SAME as backtest - Enter new trade with MT5 execution + MARGIN CHECK"""
-        # Check if allowed to trade
-        if not self.can_trade or self.breach_locked:
-            print(f"🔒 Trading locked: {self.breach_reason}")
-            return False
-        
-        # Calculate position size (EXACT SAME as backtest)
+        """Enter trade - NO BLOCKS!"""
+        # Calculate position size
         risk_usd = self.account_size * (self.risk_pct / 100)
         sl_dist = abs(entry - sl)
         qty = risk_usd / sl_dist
         
-        # Funding Pips compliance (EXACT SAME)
+        # Funding Pips compliance - sizing only
         max_loss_per_trade = self.account_size * (self.fp_rules['max_loss_per_trade_pct'] / 100)
         potential_loss = qty * sl_dist
         
@@ -895,15 +853,7 @@ class GoldSniperV5Live:
                         
                         print(f"\n📅 New Day: {current_date} | Balance: ${self.balance:,.2f}")
                     
-                    # Check compliance (EXACT SAME)
-                    compliant, message = self.check_funding_pips_compliance()
-                    if not compliant:
-                        print(f"\n⚠️  FUNDING PIPS BREACH: {message}")
-                        # Emergency close all positions
-                        self._emergency_close_all(message)
-                        print("\n🛑 Bot stopped - Funding Pips rules violated")
-                        print("   Trading locked until daily/phase reset")
-                        break
+                    # NO COMPLIANCE CHECKS - LET IT TRADE!
                     
                     # Manage active trade (EXACT SAME)
                     if self.active_trade:
