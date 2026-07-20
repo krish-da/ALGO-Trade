@@ -844,13 +844,6 @@ class GoldSniperV5Live:
                         
                         self.daily_pnl = 0
                         
-                        # Reset daily loss lock (but NOT max DD or target locks!)
-                        if self.breach_locked and "Daily loss" in self.breach_reason:
-                            self.breach_locked = False
-                            self.can_trade = True
-                            self.breach_reason = ""
-                            print(f"   🔓 Daily loss limit reset")
-                        
                         print(f"\n📅 New Day: {current_date} | Balance: ${self.balance:,.2f}")
                     
                     # NO COMPLIANCE CHECKS - LET IT TRADE!
