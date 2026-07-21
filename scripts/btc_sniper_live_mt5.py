@@ -76,7 +76,7 @@ class BTCSniperLive:
         self.min_sl_distance = 50   # Minimum stop
         
         # RISK MANAGEMENT (EXACT SAME AS BACKTEST)
-        self.min_rr_ratio = 2.5  # Higher R:R = better quality
+        self.min_rr_ratio = 1.2  # Realistic R:R for live trading
         self.max_trade_distance = 600  # Reasonable TP distance
         
         # DYNAMIC TP & AGGRESSIVE TRAILING (EXACT SAME AS BACKTEST)
@@ -427,11 +427,14 @@ class BTCSniperLive:
         # Check risk:reward (EXACT SAME AS BACKTEST)
         risk = abs(entry - sl)
         reward = abs(tp - entry)
+        rr_ratio = reward / risk if risk > 0 else 0
         
-        if reward / risk < self.min_rr_ratio:
+        if rr_ratio < self.min_rr_ratio:
+            print(f"   ⚠️  R:R too low: {rr_ratio:.2f} < {self.min_rr_ratio} (Risk: ${risk:.0f}, Reward: ${reward:.0f})")
             return None, None, None
         
         if reward > self.max_trade_distance:
+            print(f"   ⚠️  TP too far: ${reward:.0f} > {self.max_trade_distance} pips")
             return None, None, None
         
         return entry, sl, tp
@@ -441,21 +444,40 @@ class BTCSniperLive:
         # Calculate position size (EXACT SAME as backtest)
         risk_usd = self.account_size * (self.risk_pct / 100)
         sl_dist = abs(entry - sl)
-        qty = risk_usd / sl_dist
+        
+        # BTC: Calculate lots based on USD value
+        # 1 lot = 1 BTC, so we need to account for BTC price
+        btc_price = entry
+        qty_btc = risk_usd / sl_dist  # BTC quantity based on risk
+        
+        # Convert to USD value and check against account
+        position_value = qty_btc * btc_price
         
         # Funding Pips compliance - REMOVED (no blocks)
         # Just size the position safely
         max_loss_per_trade = self.account_size * 0.03  # 3% max loss
-        potential_loss = qty * sl_dist
+        potential_loss = qty_btc * sl_dist
         
         if potential_loss > max_loss_per_trade:
-            qty = max_loss_per_trade / sl_dist
+            qty_btc = max_loss_per_trade / sl_dist
+            position_value = qty_btc * btc_price
+        
+        # Apply leverage limit (1:2 for BTC on Funding Pips)
+        max_position_value = self.account_size * 2  # 1:2 leverage
+        if position_value > max_position_value:
+            qty_btc = max_position_value / btc_price
         
         # Convert to MT5 lots
         # BTC: 1 lot = 1 BTC, so qty in BTC = lots directly
-        lots = round(qty, 2)
+        lots = round(qty_btc, 2)
         if lots < 0.01:
             lots = 0.01
+        
+        # Final check: ensure position value doesn't exceed account * leverage
+        final_position_value = lots * btc_price
+        if final_position_value > self.account_size * 2:
+            print(f"   ⚠️  Position too large: ${final_position_value:,.0f} > ${self.account_size * 2:,.0f}")
+            return False
         
         # Get current price for order
         tick = mt5.symbol_info_tick(self.symbol)
@@ -522,7 +544,7 @@ class BTCSniperLive:
             'tp_extensions': 0,
             'level': level,
             'is_confluence': is_confluence,
-            'qty': qty,
+            'qty': qty_btc,
             'lots': lots,
             'balance_before': self.balance,
             'best_price': result.price,

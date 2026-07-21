@@ -362,7 +362,8 @@ class GoldSniperV5Live:
         if len(df_5m) < self.breakout_lookback_5m + 5:
             return None, None, False
         
-        # Use COMPLETED candle (iloc[-2]) not incomplete (iloc[-1])
+        # Use last COMPLETED 5-min candle (iloc[-2])
+        # CRITICAL: Only analyze if this is a NEW completed candle
         current = df_5m.iloc[-2]
         
         # 1. Check if near zone or POC (EXACT SAME)
@@ -386,17 +387,17 @@ class GoldSniperV5Live:
         level = nearby_zone if nearby_zone else nearby_poc
         is_confluence = (nearby_zone is not None and nearby_poc is not None)
         
-        # 2. Check 5-min structure break (EXACT SAME)
-        # Get 8 candles BEFORE current (positions -10 to -3)
+        # 2. Check 5-min structure break (EXACT SAME AS BACKTEST)
+        # Look at 8 COMPLETED candles BEFORE current completed candle
         recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]
         recent_high = recent['high'].max()
         recent_low = recent['low'].min()
         
-        # LONG setup: Break above recent high
+        # LONG setup: Break above recent high + threshold
         if current['close'] > recent_high + self.breakout_threshold:
             return 'LONG', level, is_confluence
         
-        # SHORT setup: Break below recent low
+        # SHORT setup: Break below recent low - threshold
         if current['close'] < recent_low - self.breakout_threshold:
             return 'SHORT', level, is_confluence
         
@@ -829,7 +830,7 @@ class GoldSniperV5Live:
                     last_zone_update = now
                 
                 # Check every 30 seconds
-                if (now - last_check).total_seconds() >= 30:
+                if (now - last_check).total_seconds() >= 1:
                     # Reset daily tracking (EXACT SAME)
                     current_date = now.date()
                     if current_date != self.current_date:
@@ -873,80 +874,86 @@ class GoldSniperV5Live:
                         
                         if df_5m is not None and len(df_5m) > 0:
                             # Only analyze on new 5-min candle (use COMPLETED candle)
+                            # CRITICAL: This matches backtest - only analyze when we have a NEW completed 5-min candle
                             if len(df_5m) >= 2:
                                 current_5m_time = df_5m.iloc[-2]['datetime']  # Last COMPLETED candle
                             
+                                # Only proceed if this is a NEW candle (not already analyzed)
                                 if last_5m_candle_time is None or current_5m_time > last_5m_candle_time:
                                     last_5m_candle_time = current_5m_time
-                                
-                                # Get current price
-                                tick = mt5.symbol_info_tick(self.symbol)
-                                current_price = tick.bid
-                                
-                                # Check proximity to zones
-                                nearest_zone = None
-                                nearest_dist = float('inf')
-                                for z in self.zones:
-                                    dist = abs(current_price - z)
-                                    if dist < nearest_dist:
-                                        nearest_dist = dist
-                                        nearest_zone = z
-                                
-                                # Show market analysis every new 5-min candle
-                                print(f"\n🔍 [{now.strftime('%H:%M')}] Market Analysis:")
-                                print(f"   Price: ${current_price:.2f}")
-                                print(f"   Nearest Zone: ${nearest_zone:.2f} ({nearest_dist:.1f} pips away)")
-                                
-                                # Check if near zone
-                                if nearest_dist <= self.zone_proximity_5m:
-                                    print(f"   ✅ NEAR ZONE! Within {self.zone_proximity_5m} pips")
                                     
-                                    # Check breakout using COMPLETED candles (EXCLUDES incomplete)
-                                    recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]  # Last 8 COMPLETED candles before current
-                                    recent_high = recent['high'].max()
-                                    recent_low = recent['low'].min()
+                                    # Get current price
+                                    tick = mt5.symbol_info_tick(self.symbol)
+                                    current_price = tick.bid
                                     
-                                    # Get COMPLETED candle close
-                                    completed_close = df_5m.iloc[-2]['close']
+                                    # Check proximity to zones
+                                    nearest_zone = None
+                                    nearest_dist = float('inf')
+                                    for z in self.zones:
+                                        dist = abs(current_price - z)
+                                        if dist < nearest_dist:
+                                            nearest_dist = dist
+                                            nearest_zone = z
                                     
-                                    print(f"   Recent High: ${recent_high:.2f}")
-                                    print(f"   Recent Low: ${recent_low:.2f}")
+                                    # Show market analysis every new 5-min candle
+                                    print(f"\n🔍 [{now.strftime('%H:%M')}] Market Analysis:")
+                                    print(f"   Price: ${current_price:.2f}")
+                                    print(f"   Nearest Zone: ${nearest_zone:.2f} ({nearest_dist:.1f} pips away)")
                                     
-                                    if completed_close > recent_high + self.breakout_threshold:
-                                        print(f"   🚀 BULLISH BREAKOUT! ${(completed_close - recent_high):.1f} pips above high")
-                                    elif completed_close < recent_low - self.breakout_threshold:
-                                        print(f"   🔻 BEARISH BREAKOUT! ${(recent_low - completed_close):.1f} pips below low")
-                                    else:
-                                        print(f"   ⏳ No breakout yet (need +{self.breakout_threshold} pip confirmation)")
-                                else:
-                                    print(f"   ⏳ Waiting for price to approach zone (need within {self.zone_proximity_5m} pips)")
-                                
-                                # Analyze 5-min setup (EXACT SAME as backtest)
-                                direction, zone_level, is_confluence = self.analyze_5m_setup(df_5m)
-                                
-                                if direction:
-                                    print(f"\n   🎯 SETUP FOUND: {direction} @ ${zone_level:.2f}")
-                                    print(f"   {'✨ CONFLUENCE (Zone + POC)' if is_confluence else '📍 Zone only'}")
-                                    print(f"   Checking 1-min entry conditions...")
-                                    
-                                    # Execute on 1-min (EXACT SAME)
-                                    entry, sl, tp = self.execute_1m_entry(direction, zone_level)
-                                    
-                                    if entry is not None:
-                                        print(f"   ✅ 1-min entry confirmed @ ${entry:.2f}")
-                                        print(f"   SL: ${sl:.2f} | TP: ${tp:.2f}")
-                                        print(f"   Executing order...")
-                                        
-                                        # Enter trade (EXACT SAME)
-                                        success = self._enter_trade(direction, entry, sl, tp, zone_level, is_confluence)
-                                        
-                                        if not success:
-                                            print(f"   ❌ Order failed")
-                                    else:
-                                        print(f"   ❌ 1-min entry rejected: Risk/Reward or SL criteria not met")
-                                else:
+                                    # Check if near zone
                                     if nearest_dist <= self.zone_proximity_5m:
-                                        print(f"   ℹ️  Near zone but no valid breakout setup")
+                                        print(f"   ✅ NEAR ZONE! Within {self.zone_proximity_5m} pips")
+                                        
+                                        # Check breakout using COMPLETED candles (EXCLUDES incomplete)
+                                        recent = df_5m.iloc[-self.breakout_lookback_5m-2:-2]  # Last 8 COMPLETED candles before current
+                                        recent_high = recent['high'].max()
+                                        recent_low = recent['low'].min()
+                                        
+                                        # Get COMPLETED candle close
+                                        completed_close = df_5m.iloc[-2]['close']
+                                        
+                                        print(f"   Recent High: ${recent_high:.2f}")
+                                        print(f"   Recent Low: ${recent_low:.2f}")
+                                        
+                                        if completed_close > recent_high + self.breakout_threshold:
+                                            print(f"   🚀 BULLISH BREAKOUT! ${(completed_close - recent_high):.1f} pips above high")
+                                        elif completed_close < recent_low - self.breakout_threshold:
+                                            print(f"   🔻 BEARISH BREAKOUT! ${(recent_low - completed_close):.1f} pips below low")
+                                        else:
+                                            print(f"   ⏳ No breakout yet (need +{self.breakout_threshold} pip confirmation)")
+                                    else:
+                                        print(f"   ⏳ Waiting for price to approach zone (need within {self.zone_proximity_5m} pips)")
+                                    
+                                    # Analyze 5-min setup (EXACT SAME as backtest)
+                                    direction, zone_level, is_confluence = self.analyze_5m_setup(df_5m)
+                                    
+                                    if direction:
+                                        print(f"\n   🎯 SETUP FOUND: {direction} @ ${zone_level:.2f}")
+                                        print(f"   {'✨ CONFLUENCE (Zone + POC)' if is_confluence else '📍 Zone only'}")
+                                        print(f"   Checking 1-min entry conditions...")
+                                        
+                                        # Execute on 1-min (EXACT SAME)
+                                        entry, sl, tp = self.execute_1m_entry(direction, zone_level)
+                                        
+                                        if entry is not None:
+                                            print(f"   ✅ 1-min entry confirmed @ ${entry:.2f}")
+                                            print(f"   SL: ${sl:.2f} | TP: ${tp:.2f}")
+                                            print(f"   Executing order...")
+                                            
+                                            # Enter trade (EXACT SAME)
+                                            success = self._enter_trade(direction, entry, sl, tp, zone_level, is_confluence)
+                                            
+                                            if success:
+                                                # Track last trade time for spacing (MATCHES BACKTEST)
+                                                self.last_trade_time = now
+                                                self.trades_today += 1
+                                            else:
+                                                print(f"   ❌ Order failed")
+                                        else:
+                                            print(f"   ❌ 1-min entry rejected: Risk/Reward or SL criteria not met")
+                                    else:
+                                        if nearest_dist <= self.zone_proximity_5m:
+                                            print(f"   ℹ️  Near zone but no valid breakout setup")
                     
                     last_check = now
                 
